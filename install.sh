@@ -271,15 +271,23 @@ tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}"
 info "Installing to ${INSTALL_DIR}..."
 EXTRACTED_DIR="${TMPDIR}/${BINARY}-${VERSION}-${TRIPLE}"
 # A release is one complete set. Check every member before changing the install.
-for artifact in "$BINARY" iso-sandbox iso-macos-helper iso-proxy iso-egress; do
+# Releases before v0.12.0 predate the iso-inference gateway, so only later
+# ones must carry it.
+REQUIRED=("$BINARY" iso-sandbox iso-macos-helper iso-proxy iso-egress)
+case "$VERSION" in
+    v0.[3-9].* | v0.1[01].*) ;;
+    *) REQUIRED+=(iso-inference) ;;
+esac
+for artifact in "${REQUIRED[@]}"; do
     [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ] \
         || die "Release is missing a regular ${artifact} binary"
 done
 mkdir -p "$INSTALL_DIR"
-# Linux `desktop` images' MCP server and kernel. A release before them has
-# none (build-release.py requires them); its install removes any copy another
-# release left, so none stays beside a runtime it was not built with.
-for artifact in iso-cu-mcp vmlinux-desktop; do
+# Members an older release lacks: the iso-inference gateway, and the Linux
+# `desktop` images' MCP server and kernel (build-release.py requires all
+# three). A release without one removes any copy another release left, so
+# none stays beside binaries it was not built with.
+for artifact in iso-inference iso-cu-mcp vmlinux-desktop; do
     if [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ]; then
         mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
         chmod 0755 "${INSTALL_DIR}/${artifact}"

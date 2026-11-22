@@ -189,6 +189,8 @@ EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 printf '#!/bin/sh\necho installed-iso-egress\n' >"$TMPDIR/build/${FAKE_DIR}/iso-egress"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-egress"
+printf '#!/bin/sh\necho installed-iso-inference\n' >"$TMPDIR/build/${FAKE_DIR}/iso-inference"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-inference"
 printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
@@ -257,6 +259,12 @@ if [[ "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress ]]; then
     pass "update installs the egress companion"
 else
     fail "update installs the egress companion"
+fi
+
+if [[ "$("$TMPDIR/bin/iso-inference" 2>/dev/null)" == installed-iso-inference ]]; then
+    pass "update installs the inference gateway"
+else
+    fail "update installs the inference gateway"
 fi
 
 for artifact in iso-cu-mcp vmlinux-desktop; do
@@ -398,14 +406,14 @@ repack_release_fixture() {
 seed_install() {
     cp "$RELEASE_BIN" "$ISO_BIN"
     original_host="$(sha_of "$ISO_BIN")"
-    for artifact in iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+    for artifact in iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
         printf '%s\n' "keep-$artifact" >"$TMPDIR/bin/$artifact"
     done
 }
 
 install_unchanged() {
     [[ "$(sha_of "$ISO_BIN")" == "$original_host" ]] || return 1
-    for artifact in iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+    for artifact in iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
         [[ "$(cat "$TMPDIR/bin/$artifact")" == "keep-$artifact" ]] || return 1
     done
 }
@@ -447,6 +455,7 @@ if "$ISO_BIN" update --yes >"$TMPDIR/complete.log" 2>&1 \
        && "$("$TMPDIR/bin/iso-proxy")" == "MARKER: fake-proxy-binary" \
        && "$("$TMPDIR/bin/iso-sandbox")" == installed-iso-sandbox \
        && "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress \
+       && "$("$TMPDIR/bin/iso-inference")" == installed-iso-inference \
        && "$("$TMPDIR/bin/iso-macos-helper")" == installed-iso-macos-helper ]]; then
     pass "complete release replaces every binary"
 else

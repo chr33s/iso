@@ -17,8 +17,8 @@ are outside this fork's scope.
 The installer, updater, and repository provenance checks target `chr33s/iso`.
 Release tags must point to commits reachable from the `main` branch. A
 release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
-the Swift host `iso`, the credential proxy `iso-proxy`, the egress companion
-`iso-egress`, the
+the Swift host `iso`, the credential proxy `iso-proxy`, the local inference
+gateway `iso-inference`, the egress companion `iso-egress`, the
 signed `iso-sandbox` runtime and its macOS guest helper `iso-macos-helper`, the
 Linux `desktop` images' guest files `iso-cu-mcp` and `vmlinux-desktop`, the
 `skills/iso/` [agent skill](docs/agent-skill.md), plus `BUILD.json`, `LICENSE`, `NOTICE`,
@@ -41,7 +41,8 @@ build entrypoint. Its stages are explicit and run in order:
    modified. `--expected-revision SHA` requires a clean checkout of exactly
    that commit, before and after the build.
 2. **build** — `iso` (release: optimized, `-D ISO_RELEASE_BUILD`, which makes
-   `iso update` treat the binary as a release), `iso-proxy`, `iso-egress`,
+   `iso update` treat the binary as a release), `iso-proxy` and
+   `iso-inference` (both from the `iso-proxy` package), `iso-egress`,
    `iso-sandbox` and `iso-macos-helper`, all with `--force-resolved-versions`.
    Each is signed ad hoc with the hardened runtime and the Enhanced Security
    entitlements in `scripts/enhanced-security.entitlements` (`iso-sandbox`
@@ -174,8 +175,8 @@ workflow identity; use those original identities when verifying old artifacts.
 `scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
 staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
-`iso`, `iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` with a
-Developer ID Application certificate (hardened runtime, secure timestamp, the
+`iso`, `iso-proxy`, `iso-inference`, `iso-egress`, `iso-sandbox` and
+`iso-macos-helper` with a Developer ID Application certificate (hardened runtime, secure timestamp, the
 Enhanced Security entitlements; `iso-sandbox` keeps its virtualization
 entitlement), submits them to Apple's notary service, and fails unless
 notarization is `Accepted`. A browser-downloaded archive then runs without
@@ -365,7 +366,8 @@ check on `main`; check its latest run before tagging.
    - `scripts/fuzz.sh run <target> 600` when it changed a parser of
      user-editable or guest-authored input (`ParseRepoSlug`, `JSONCToJSON`,
      `ConfigLoad`, `GuestJSON`, `CodexTOML`, `EgressConnect`, `EgressHead`,
-     `ProxyRequestTarget`, `ProxyHeaders`, `ProxyCapability`).
+     `ProxyRequestTarget`, `ProxyHeaders`, `ProxyCapability`,
+     `InferenceRequest`, `InferenceStream`, `InferenceControl`).
 
 7. **Open the bump PR** (`Sources/IsoHost/Update/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `main`. Never push the bump straight to `main`.
@@ -392,7 +394,7 @@ check on `main`; check its latest run before tagging.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `iso-cu-mcp`, `vmlinux-desktop`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
+     `iso-inference`, `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `iso-cu-mcp`, `vmlinux-desktop`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig`, `attestations.jsonl` and the desktop
      kernel's corresponding source, `iso-vX.Y.Z-vmlinux-desktop-source.tar.gz`,
    - the build-provenance attestation is attached,
