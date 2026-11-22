@@ -121,11 +121,16 @@ package enum Sandboxes {
   package static func create(
     root: SandboxRoot, id: SandboxID, owner: String, source: SandboxSource, cpus: Int,
     memoryBytes: UInt64, diskBytes: UInt64,
-    network: NetworkMode = .shared, display: SandboxDisplay = .headless
+    network: NetworkMode = .shared, display: SandboxDisplay = .headless,
+    inferenceRelay: Bool = false
   ) async throws -> SandboxRecord {
     let operation = try OperationLock.shared(root)
     defer { withExtendedLifetime(operation) {} }
     try root.requireInitialized()
+    // Refused again when the record is built; checked here before any disk is cloned.
+    if inferenceRelay, network == .brokered {
+      throw SandboxError("a brokered sandbox has no inference relay")
+    }
     _ = try Owner.kernel(root: root, display: display.mode)
     guard cpus >= 1, memoryBytes >= 256 * 1024 * 1024, diskBytes >= 1024 * 1024 * 1024 else {
       throw SandboxError("cpus must be >= 1, memory >= 256 MiB, disk >= 1 GiB")
@@ -144,7 +149,7 @@ package enum Sandboxes {
         return try await populate(
           root: root, paths: paths, id: id, owner: owner, source: source, cpus: cpus,
           memoryBytes: memoryBytes, diskBytes: diskBytes,
-          network: network, display: display)
+          network: network, display: display, inferenceRelay: inferenceRelay)
       } catch {
         try? FileManager.default.removeItem(at: paths.dir)
         throw error
@@ -155,7 +160,8 @@ package enum Sandboxes {
   static func populate(
     root: SandboxRoot, paths: SandboxPaths, id: SandboxID, owner: String, source: SandboxSource,
     cpus: Int, memoryBytes: UInt64,
-    diskBytes: UInt64, network: NetworkMode, display: SandboxDisplay = .headless
+    diskBytes: UInt64, network: NetworkMode, display: SandboxDisplay = .headless,
+    inferenceRelay: Bool = false
   ) async throws -> SandboxRecord {
 
     let imageReference: String
@@ -193,12 +199,13 @@ package enum Sandboxes {
 
     var record: SandboxRecord?
     let commit = { (index: Int?) throws in
-      let r = SandboxRecord(
+      var r = SandboxRecord(
         id: id, owner: owner, imageReference: imageReference, imageDigest: imageDigest,
         baseDisk: baseDisk,
         environment: environment, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes,
         subnetIndex: index,
         createdAt: Date(), network: network, display: display)
+      try r.setInferenceRelay(inferenceRelay)
       // Writing the record commits the create.
       try paths.save(r)
       record = r
@@ -226,10 +233,12 @@ package enum Sandboxes {
 
   // MARK: start / stop
 
+  /// `inferenceRelay` switches the relay for this boot and later ones; nil keeps the record's.
   package static func start(
     root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval,
     expiresAt: Date? = nil,
-    networkPolicy: String? = nil
+    networkPolicy: String? = nil,
+    inferenceRelay: Bool? = nil
   ) async throws -> LiveState {
     if let expiresAt, expiresAt <= Date() { throw SandboxError("--expires-at is in the past") }
     if let networkPolicy, !isPolicyDigest(networkPolicy) {
@@ -247,12 +256,11 @@ package enum Sandboxes {
         try? FileManager.default.removeItem(at: paths.live)
       }
       try requireStopped(paths, id)
-      if networkPolicy != nil, record.network != .brokered {
-        throw SandboxError("--network-policy applies only to brokered sandboxes")
-      }
-      if record.expiresAt != expiresAt || record.networkPolicy != networkPolicy {
-        record.expiresAt = expiresAt
-        record.networkPolicy = networkPolicy
+      // A crashed owner's state was cleared above, so a crash cannot block the change.
+      if let updated = try bootRecord(
+        record, expiresAt: expiresAt, networkPolicy: networkPolicy, inferenceRelay: inferenceRelay)
+      {
+        record = updated
         try paths.save(record)
       }
       Launchd.bootout(paths.launchdLabel)
@@ -281,6 +289,25 @@ package enum Sandboxes {
     let tail = logTail(paths.ownerLog, lines: 20)
     Launchd.bootout(paths.launchdLabel)
     throw SandboxError("\(id) did not become ready within \(Int(wait))s; owner log:\n\(tail)")
+  }
+
+  /// `record` with `start`'s per-boot settings applied, or nil when they leave it unchanged.
+  /// The session window and network policy apply to this boot (a `start` without them clears
+  /// them); the inference relay is switched on or off, or kept when `inferenceRelay` is nil.
+  static func bootRecord(
+    _ record: SandboxRecord, expiresAt: Date?, networkPolicy: String?, inferenceRelay: Bool?
+  ) throws -> SandboxRecord? {
+    if networkPolicy != nil, record.network != .brokered {
+      throw SandboxError("--network-policy applies only to brokered sandboxes")
+    }
+    var updated = record
+    updated.expiresAt = expiresAt
+    updated.networkPolicy = networkPolicy
+    if let inferenceRelay { try updated.setInferenceRelay(inferenceRelay) }
+    let changed =
+      updated.expiresAt != record.expiresAt || updated.networkPolicy != record.networkPolicy
+      || updated.inferenceRelay != record.inferenceRelay
+    return changed ? updated : nil
   }
 
   static func isPolicyDigest(_ value: String) -> Bool {

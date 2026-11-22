@@ -159,6 +159,8 @@ struct Create: AsyncParsableCommand {
   var guestComputerUse = false
   @Option(help: "Frames per second the guest may take (1-10; with --guest-computer-use)")
   var guestFrameRate: Int?
+  @Flag(help: "Relay the iso inference gateway's socket into the guest (not with brokered)")
+  var inferenceRelay = false
 
   var displayMode: DisplayMode? {
     switch display {
@@ -191,6 +193,9 @@ struct Create: AsyncParsableCommand {
     guard !guestComputerUse || displayMode == .virtioDisplay else {
       throw ValidationError("--guest-computer-use needs --display virtio")
     }
+    guard !inferenceRelay || mode != .brokered else {
+      throw ValidationError("--inference-relay is not available with --network brokered")
+    }
     _ = try bytes(memoryMib, mib)
     _ = try bytes(diskGib, gib)
   }
@@ -211,7 +216,7 @@ struct Create: AsyncParsableCommand {
     let record = try await Sandboxes.create(
       root: try root.resolve(), id: try SandboxID(id), owner: owner, source: source, cpus: cpus,
       memoryBytes: try bytes(memoryMib, mib), diskBytes: try bytes(diskGib, gib),
-      network: mode ?? .shared, display: sandboxDisplay)
+      network: mode ?? .shared, display: sandboxDisplay, inferenceRelay: inferenceRelay)
     try printJSON(record)
   }
 }
@@ -226,6 +231,11 @@ struct Start: AsyncParsableCommand {
   var expiresAt: Int64?
   @Option(help: "Brokered sandboxes: the host's network-policy digest every stream must present")
   var networkPolicy: String?
+  @Option(
+    help:
+      "on or off: relay the iso inference gateway's socket into the guest from this boot on, or stop; omitted keeps the recorded setting"
+  )
+  var inferenceRelay: Switch?
 
   func run() async throws {
     let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
@@ -233,9 +243,14 @@ struct Start: AsyncParsableCommand {
       root: try root.resolve(), id: try SandboxID(id), executable: exe,
       wait: TimeInterval(waitSeconds),
       expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-      networkPolicy: networkPolicy)
+      networkPolicy: networkPolicy, inferenceRelay: inferenceRelay.map { $0 == .on })
     try printJSON(live)
   }
+}
+
+/// `on` or `off`, for an option that may also be omitted.
+enum Switch: String, ExpressibleByArgument, CaseIterable {
+  case on, off
 }
 
 struct Run: AsyncParsableCommand {

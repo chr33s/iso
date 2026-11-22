@@ -19,7 +19,7 @@ The host CLI is built from the root Swift package (`swift build`, or
 [`containerization`](https://github.com/apple/containerization) package
 ([`iso-sandbox`](../iso-sandbox)).
 
-Each instance is one Linux VM running systemd from its own ext4 disk, on its own vmnet network (or, with [`network.transport: "brokered"`](configuration.md#network), with no network device), with no host mounts, socket relays, published ports, or host SSH-agent forwarding. The runtime's sandbox record has no field for any of those, and isolate verifies the running VM's effective configuration before every hand-out. [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md) records why this replaced the earlier `container machine` fork.
+Each instance is one Linux VM running systemd from its own ext4 disk, on its own vmnet network (or, with [`network.transport: "brokered"`](configuration.md#network), with no network device), with no host mounts, published ports, or host SSH-agent forwarding, and no socket relay except the [inference relay](#inference-relay). The runtime's sandbox record has no field for any of those; the relay's one field only switches it on, and its host and guest paths are derived or fixed. isolate verifies the running VM's effective configuration before every hand-out. [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md) records why this replaced the earlier `container machine` fork.
 
 ### Prerequisites
 
@@ -38,13 +38,13 @@ Host Docker is not needed. Docker runs *inside* the guest.
 scripts/build-iso-sandbox.sh            # installs ~/.local/opt/iso-sandbox/bin/iso-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime, the Enhanced Security entitlements and `com.apple.security.virtualization` (`iso-sandbox/iso-sandbox.entitlements`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. `--experimental-coreai` instead installs the unreleased `iso-sandbox-coreai`, whose private entitlement needs a host with AMFI relaxed; see [`coreai.md`](coreai.md). isolate accepts protocol 5 with containerization 0.54.0 and refuses any other protocol or containerization version.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime, the Enhanced Security entitlements and `com.apple.security.virtualization` (`iso-sandbox/iso-sandbox.entitlements`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. `--experimental-coreai` instead installs the unreleased `iso-sandbox-coreai`, whose private entitlement needs a host with AMFI relaxed; see [`coreai.md`](coreai.md). isolate accepts protocol 6 with containerization 0.54.0 and refuses any other protocol or containerization version.
 
 ### Supported combinations
 
 | iso-sandbox | containerization | macOS | Hardware | Evidence |
 |---|---|---|---|---|
-| 0.1.0 (protocol 5) | 0.54.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
+| 0.1.0 (protocol 6) | 0.54.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). Protocol 6 adds the [inference relay](#inference-relay), which is unit-tested but not yet validated on hardware. |
 
 The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.56-208-debug`, sha256 `98a1005f…f7511`, the Kata 4.3.1 kernel `container` 1.7.1 installs) and its init image (`vminit:0.54.0` by digest). `iso setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
 
@@ -113,7 +113,7 @@ explicit `apple_container.binary` still takes precedence. `iso update` targets
 
 `iso setup`:
 
-1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 5, containerization 0.54.0), and creates `owner.json` and the VM-access key pair.
+1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 6, containerization 0.54.0), and creates `owner.json` and the VM-access key pair.
 2. Initializes the runtime root: copies the kernel after checking its pinned sha256, and pulls the pinned init image. Unless the runtime already has the current maintenance image, builds it (Ubuntu with e2fsprogs; log in `maintenance-build.log`), installs it with `iso-sandbox maintenance install`, and deletes the store copy.
 3. Renders a minimal build context in a private temporary directory: a Dockerfile `FROM ubuntu:24.04` pinned by digest, the Apple provisioning script (packages, profiles, OCI features, guest user, Claude Code, Codex, Docker), and a machine-setup script. The context contains the isolate **public** key only. There are no build arguments and no secrets.
 4. Checks that the builder's service is running, then runs `container build --platform linux/arm64 -t local/iso-<owner>:<hash>-<nonce>`, with output in `images/<name>/build.log`. Every build gets a fresh tag, so a rebuild never retags an image in use.
@@ -137,7 +137,7 @@ Marketplaces and plugins are not baked into the image. The first boot installs t
    - The sandbox runs `/sbin/init`, without nested virtualization.
    - It boots from its own disk under `runtime/sandboxes/<id>/`.
    - Its only mounts are the kernel pseudo-filesystems (`proc`, `sysfs`, `devtmpfs`, `mqueue`, `tmpfs` at `/dev/shm`, `cgroup2`, `devpts`) from their fixed sources.
-   - It has no socket relays, published ports, or agent forwarding.
+   - It has no published ports or agent forwarding, and no socket relay except, when the configuration requires the inference gateway, exactly the [inference relay](#inference-relay): the host socket iso derives for the instance, `/var/lib/iso-inference/gateway.sock` in the guest, at most 32 connections at once.
    - It has exactly one interface, on its own vmnet subnet, carrying the address the owner reports.
    - Its CPUs, memory, and image digest match the record.
 6. Read `/etc/ssh/ssh_host_ed25519_key.pub` over the runtime's native control channel (vsock exec, an argv rather than a shell string), confirm the owner did not restart meanwhile, and pin the key in the instance's `known_hosts`.
@@ -172,8 +172,46 @@ differ in steps 2, 4, 5 and 7:
   --root <root> <id> [--session S]` revokes, a running brokered sandbox's open
   streams.
 
-The runtime advertises this as the `brokered-transport` feature on protocol 5;
-vmnet output is unchanged.
+The runtime advertises this as the `brokered-transport` feature (since protocol
+5); vmnet output is unchanged. A brokered sandbox has no inference relay: the
+runtime refuses `create --inference-relay` and `start --inference-relay on` for
+it, and a brokered record that sets the relay does not decode.
+
+### Inference relay
+
+With the relay on, a Linux instance reaches the iso inference gateway's
+per-instance Unix socket from inside the guest, with no inference listener on
+host TCP.
+
+- `iso-sandbox create --inference-relay` records `inferenceRelay: true`, and
+  `iso-sandbox start --inference-relay on|off` switches it from that boot on
+  (omitted, the recorded setting is kept). `start` records it under the
+  sandbox's mutation guard, after clearing a crashed owner's state. The record
+  holds no path.
+- The host end is derived like the owner's control socket:
+  `<per-user temp>/iso-sbx/inference/<hash of the sandbox directory>.sock`. The
+  owner creates `iso-sbx/inference` `0700`, or refuses it unless it is a real
+  directory owned by the user and closed to everyone else, and dials the socket
+  only if it is a socket the user owns (not a symlink) whose peer runs as the
+  user. The gateway binds that socket; the owner touches it and its directory
+  hourly so macOS's temporary-directory cleaner keeps them.
+- The guest end is `/var/lib/iso-inference/gateway.sock`, outside `/run` (which
+  systemd mounts over). The owner runs the relay on containerization's public
+  API rather than the framework's socket relay: it listens on host vsock port
+  7803, and the guest agent (vminitd, from the pinned `vminit:0.54.0` image)
+  serves the guest path and dials that port for each guest connection.
+- At most 32 connections are relayed at once. One arriving at the limit, after
+  a halt began or past the session deadline is closed before the gateway is
+  dialed, so a guest cannot exhaust the owner's descriptors, and a failed dial
+  closes only that connection. The gateway closing its end ends the connection
+  once every byte it sent has reached the guest, so an idle guest cannot keep a
+  slot the gateway has closed; a guest that stops reading for 30 s loses the
+  connection. A halt or the session deadline closes every relayed connection.
+- The owner sets the relay up again on every boot, including a launchd respawn
+  after a crash. `inspect` reports it as `effective.inferenceRelay: {host, guest,
+  maxConnections}`, counted in `socketRelays`; its guest end, a bind mount of
+  vminitd's socket, is not listed among the mounts.
+- Linux instances only: macOS guests and brokered instances have no relay.
 
 Local model servers on host loopback reach the guest over a per-instance `ssh -R 127.0.0.1:<guest-port>:<host-addr>:<host-port>` tunnel. The forward goes to the exact loopback address the URL names. The guest port is the same as the host port, except that a privileged port (below 1024) moves to port + 40000, so `https://localhost` becomes `https://localhost:40443` in the guest. `localhost` and `127.0.0.1` URLs keep their host, so TLS names still verify. Other `127.x` addresses are rewritten to `127.0.0.1` for plain HTTP only. IPv6-loopback endpoints are rejected. Every boot first closes the tunnels recorded for the previous boot. Each bootstrap then reconciles the tunnels for both agents: live tunnels are kept, tunnels the config no longer needs are closed, and two endpoints that need the same guest port with different destinations are an error.
 
@@ -203,7 +241,7 @@ All three need the instance stopped.
 | `APPLE_RUNTIME_UNAVAILABLE` | No usable iso-sandbox or builder, builder service not running, kernel not accepted, or unsupported platform. |
 | `APPLE_RUNTIME_UNQUALIFIED` | Unknown runtime, protocol, `containerization` version, or output schema (including an unknown field in the effective configuration). |
 | `APPLE_NETWORK_ISOLATION` | Missing, extra, or foreign network interface, or an address that does not match; for a brokered sandbox, any network device, interface or address, or a boot started with another network policy. |
-| `APPLE_HOST_EXPOSURE` | A host mount, socket relay, published port, agent forwarding, foreign root disk, or non-systemd init; for a brokered sandbox, a channel policy other than iso's. |
+| `APPLE_HOST_EXPOSURE` | A host mount, published port, agent forwarding, foreign root disk, or non-systemd init; any socket relay but the instance's own inference relay when the configuration requires it; for a brokered sandbox, a channel policy other than iso's. |
 | `APPLE_IDENTITY_CONFLICT` | Ownership, name, image, resource, or boot identity mismatch. |
 | `APPLE_HOST_KEY_CHANGED` | Missing or changed pinned host key. |
 | `APPLE_SESSION_EXPIRED` | The instance's `limits.session_ttl` has passed. The owner halts the VM at the deadline; the host also refuses to hand out a sandbox whose deadline has passed. `iso stop` then `iso start` begins a new session. |

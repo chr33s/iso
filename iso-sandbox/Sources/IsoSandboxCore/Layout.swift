@@ -195,6 +195,12 @@ package struct SandboxPaths: Sendable {
     return URL(fileURLWithPath: tmp, isDirectory: true).appendingPathComponent(
       "iso-sbx", isDirectory: true)
   }()
+  /// The host end of this sandbox's inference relay: the gateway's socket, in
+  /// ``InferenceRelay/hostDirectory`` beside the control sockets, named by the
+  /// same hash. The record holds no path; this is the only one the owner dials.
+  package var inferenceSocket: URL {
+    InferenceRelay.hostDirectory.appendingPathComponent("\(Self.stableHash(dir.path)).sock")
+  }
   /// launchd label, unique per state root and sandbox.
   package var launchdLabel: String { "dev.iso.sandbox.\(Self.stableHash(dir.path))" }
 
@@ -341,8 +347,9 @@ package enum SandboxDisplay: Sendable, Equatable {
 }
 
 /// Durable description of a persistent sandbox.
-/// Deliberately no field for host mounts, socket relays, published ports or agent forwarding: those
-/// states are not expressible.
+/// Deliberately no field for host mounts, published ports or agent forwarding, and no path for a
+/// socket relay: those states are not expressible. The one relay a record can switch on
+/// (``inferenceRelay``) has a host path the runtime derives and a fixed guest path.
 package struct SandboxRecord: Codable, Sendable {
   package var id: SandboxID
   /// Caller-chosen ownership tag; `delete` refuses a mismatch.
@@ -384,8 +391,15 @@ package struct SandboxRecord: Codable, Sendable {
   /// Only a ``DisplayMode/virtioDisplay`` sandbox has it; a record that says otherwise does not
   /// decode.
   package private(set) var guestComputerUse: MacGuestComputerUse?
+  /// Relay the iso inference gateway's socket for this sandbox into the guest
+  /// (``InferenceRelay``) on the current boot: set by `create --inference-relay`,
+  /// and by `start --inference-relay on|off`. True or absent, never false; a
+  /// brokered record that sets it does not decode. Read it through
+  /// ``relaysInference``.
+  package private(set) var inferenceRelay: Bool?
 
   package var displayMode: DisplayMode { display ?? .headless }
+  package var relaysInference: Bool { inferenceRelay == true }
   package var subnet: String? { subnetIndex.map(Self.subnet) }
   package static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
 
@@ -408,6 +422,16 @@ package struct SandboxRecord: Codable, Sendable {
     self.network = network
     self.display = display == .headless ? nil : display.mode
     self.guestComputerUse = display.guestComputerUse
+  }
+
+  /// Switches the inference relay for the next boot.
+  /// A brokered sandbox has none: its owner opens no host listener that routes to a socket
+  /// (docs/design/brokered-network-isolation.md, NET-04).
+  package mutating func setInferenceRelay(_ on: Bool) throws {
+    guard !on || network != .brokered else {
+      throw SandboxError("a brokered sandbox has no inference relay")
+    }
+    inferenceRelay = on ? true : nil
   }
 
   /// As synthesized, and refuses guest computer use without a display.
@@ -436,6 +460,12 @@ package struct SandboxRecord: Codable, Sendable {
       throw DecodingError.dataCorruptedError(
         forKey: .guestComputerUse, in: c,
         debugDescription: "guest computer use recorded without a display")
+    }
+    inferenceRelay = try c.decodeIfPresent(Bool.self, forKey: .inferenceRelay) == true ? true : nil
+    guard network != .brokered || inferenceRelay == nil else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .inferenceRelay, in: c,
+        debugDescription: "an inference relay recorded for a brokered sandbox")
     }
   }
 }
