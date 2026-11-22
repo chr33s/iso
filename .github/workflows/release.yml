@@ -107,6 +107,7 @@ jobs:
           fi
           test -x "$dir/iso-proxy"
           test -x "$dir/iso-inference"
+          test -x "$dir/iso-egress"
           test -x "$dir/iso-sandbox"
           test -x "$dir/iso-macos-helper"
           test -x "$dir/iso-cu-mcp"

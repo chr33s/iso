@@ -109,7 +109,7 @@ jobs:
           scripts/macos-sign-notarize.sh "staging/${name}"
           # BUILD.json records the unsigned binaries; describe the signed ones.
           manifest="staging/${name}/BUILD.json"
-          for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
+          for binary in iso iso-proxy iso-inference iso-egress iso-sandbox iso-macos-helper; do
             sha="$(shasum -a 256 "staging/${name}/${binary}" | cut -d' ' -f1)"
             jq --arg b "$binary" --arg s "$sha" '.binaries[$b] = $s' "$manifest" > "$manifest.new"
             mv "$manifest.new" "$manifest"
@@ -127,7 +127,7 @@ jobs:
           name="iso-${REVISION::12}-aarch64-apple-darwin"
           (
             cd "staging/${name}"
-            for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
+            for binary in iso iso-proxy iso-inference iso-egress iso-sandbox iso-macos-helper; do
               test -x "$binary"
               test "$(shasum -a 256 "$binary" | cut -d' ' -f1)" = "$(jq -r ".binaries[\"$binary\"]" BUILD.json)"
               codesign --verify --strict "$binary"

@@ -16,7 +16,7 @@ import subprocess
 import tarfile
 import tempfile
 
-BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper")
+BINARIES = ("iso", "iso-proxy", "iso-inference", "iso-egress", "iso-sandbox", "iso-macos-helper")
 LINUX_GUEST_FILES = ("iso-cu-mcp", "vmlinux-desktop")
 MAX_BYTES = 2 * 1024 ** 3
 MAX_MEMBERS = 4096

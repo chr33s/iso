@@ -28,6 +28,13 @@ RELEASE_SPEC = importlib.util.spec_from_file_location('release', ROOT / 'scripts
 RELEASE = importlib.util.module_from_spec(RELEASE_SPEC)
 RELEASE_SPEC.loader.exec_module(RELEASE)
 
+
+def load_script(name, path):
+    spec = importlib.util.spec_from_file_location(name, ROOT / path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 # Stand-in for every Python gate: records its path and arguments.
 PYTHON_STUB = '''import os, sys
 call = " ".join([os.path.basename(sys.argv[0]), *sys.argv[1:]])
@@ -502,8 +509,8 @@ class ReleaseBinaryTests(unittest.TestCase):
             workflow, re.S)[1]
         script = "\n".join(line[10:] for line in block.splitlines())
         name = 'iso-v9.8.7-aarch64-apple-darwin'
-        members = ('iso-proxy', 'iso-sandbox', 'iso-macos-helper', 'skill',
-                   'iso-cu-mcp', 'vmlinux-desktop', 'kernel-source')
+        members = ('iso-proxy', 'iso-inference', 'iso-egress', 'iso-sandbox', 'iso-macos-helper',
+                   'skill', 'iso-cu-mcp', 'vmlinux-desktop', 'kernel-source')
         cases = [('iso 9.8.7 (abc1234)', None, 0),
                  ('iso 9.8.7-dev (abc1234+dirty)', None, 1),
                  ('iso 9.8.6 (abc1234)', None, 1),
@@ -519,6 +526,7 @@ class ReleaseBinaryTests(unittest.TestCase):
                 binaries = {'iso': f"#!/bin/sh\nprintf '%s\\n' '{version}'\n",
                             'iso-proxy': '#!/bin/sh\nexit 0\n',
                             'iso-inference': '#!/bin/sh\nexit 0\n',
+                            'iso-egress': '#!/bin/sh\nexit 0\n',
                             'iso-sandbox': '#!/bin/sh\nexit 0\n',
                             'iso-macos-helper': '#!/bin/sh\nexit 0\n',
                             'iso-cu-mcp': 'elf\n'}
@@ -547,6 +555,30 @@ class ReleaseBinaryTests(unittest.TestCase):
                 if expected == 0:
                     self.assertEqual(github_env.read_text(),
                                      f"TARBALL={root}/dist/{name}.tar.gz\n")
+
+    def test_every_per_binary_list_names_every_release_binary(self):
+        # A binary left out of one list ships with a stale BUILD.json digest,
+        # unchecked, unverified or uninstalled.
+        expected = set(RELEASE.BINARIES)
+        self.assertIn('iso-inference', expected)
+        lists = {}
+        for path, variable in (('.github/workflows/release.yml', 'binary'),
+                               ('.github/workflows/candidate.yml', 'binary'),
+                               ('RELEASING.md', 'binary')):
+            loops = re.findall(rf'for {variable} in ([^;\n]+); do', (ROOT / path).read_text())
+            self.assertTrue(loops, path)
+            for index, words in enumerate(loops, 1):
+                lists[f'{path} loop {index}'] = set(words.split())
+        installer = (ROOT / 'install.sh').read_text()
+        required = re.findall(r'\bREQUIRED\+?=\(([^)]*)\)', installer)
+        self.assertEqual(len(required), 2)
+        lists['install.sh REQUIRED'] = set(' '.join(required).replace('"$BINARY"', 'iso').split())
+        for name, path in (('candidate', 'scripts/verify-candidate.py'),
+                           ('acceptance', 'scripts/accept-release.py')):
+            lists[path] = set(load_script(name, path).BINARIES)
+        for name, binaries in lists.items():
+            with self.subTest(list=name):
+                self.assertEqual(binaries, expected)
 
     def test_kernel_source_is_uploaded_where_the_publish_job_collects(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()

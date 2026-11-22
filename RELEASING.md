@@ -122,7 +122,7 @@ full commit SHA from the workflow run, then verify before extracting:
 
 The automated equivalent, run from the repository checkout, verifies the pinned
 attestation before extraction, rejects unsafe archive members, checks clean build
-metadata and all five executable hashes, and requires Developer ID signatures and
+metadata and all six executable hashes, and requires Developer ID signatures and
 notarized Gatekeeper assessments before running either version command:
 
 ```bash
@@ -153,7 +153,7 @@ set -e
 mkdir candidate
 tar -xzf "$ARCHIVE" -C candidate
 cd "candidate/iso-${REVISION:0:12}-aarch64-apple-darwin"
-for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
+for binary in iso iso-proxy iso-inference iso-egress iso-sandbox iso-macos-helper; do
   codesign --verify --strict "$binary"
 done
 # The Linux guest files are not Mach-O and carry no signature of their own.
@@ -167,7 +167,7 @@ cat BUILD.json
 `BUILD.json` must name the expected commit in `source_revision`, with
 `source_dirty: false`, `release_build: true`, `tested: true`, and
 `developer_id_signed: true`, and its `binaries` digests must match the
-extracted files. All five binaries stay
+extracted files. All six binaries stay
 together. Earlier downloads retain their original archive layout and signer
 workflow identity; use those original identities when verifying old artifacts.
 
@@ -423,7 +423,7 @@ check on `main`; check its latest run before tagging.
    download, so confirm the asset on the release page (step 10's first bullet)
    before concluding it is missing.
 
-   For a repeatable isolated install, five-binary replacement, version/signing
+   For a repeatable isolated install, six-binary replacement, version/signing
    check, and CLI uninstall, run:
 
    ```bash
@@ -435,9 +435,10 @@ check on `main`; check its latest run before tagging.
    stripped. The first-release path forces a same-version replacement; later
    releases can use `--from-version vA.B.C` for cross-version upgrade acceptance.
    A starting release whose updater predates `iso-cu-mcp` and
-   `vmlinux-desktop` (v0.9.0 and earlier) installs neither, so the script
-   then runs the documented second `iso update --force` and reports it as
-   `guest_files`.
+   `vmlinux-desktop` (v0.9.0 and earlier) installs neither, and one before
+   v0.12.0 installs no `iso-inference`, so the script then runs the
+   documented second `iso update --force` and reports it as `guest_files`
+   or `inference_gateway`.
    The install and update steps each download a full release and may take up
    to `--download-timeout` seconds (default 1800); other steps keep 300.
    It creates no VM and performs no provider calls. Run it on a clean supported
