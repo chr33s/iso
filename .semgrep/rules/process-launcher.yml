@@ -31,5 +31,5 @@ rules:
         - /iso-ci/Sources/IsoCICore/Preflight/DataPlane/DataPlaneSupervisor.swift
         - /iso-ci/Sources/IsoCICore/Preflight/DataPlane/DataPlaneChild.swift
         # Sandbox self-tests that expect exec to be refused.
-        - /iso-proxy/Sources/IsoProxy/Jail.swift
+        - /iso-proxy/Sources/IsoProxyCore/JailProbes.swift
         - /iso-egress/Sources/IsoEgress/Jail.swift
