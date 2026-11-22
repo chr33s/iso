@@ -40,7 +40,7 @@ after hand edits.
 | `coreai` | object | unset (off) | Experimental, macOS guests only: paravirtualized Core AI accelerators. Weakens the host. See [coreai](#coreai). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
-| `inference` | object | unset (`"mode": "off"`) | Guarded host-side local models through the `iso-inference` gateway; Linux guests only. See [`inference`](#inference-section). |
+| `inference` | object | unset (`"mode": "off"`) | Guarded host-side local models through the `iso-inference` gateway; Linux guests on the vmnet transport only. See [`inference`](#inference-section). |
 | `network` | object | `{"transport": "brokered"}` | How new instances' VMs are connected: `"brokered"` (no network device) or `"vmnet"` (an explicit compatibility choice; required for macOS guests and open egress). See [network](#network). |
 | `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
@@ -440,23 +440,26 @@ Under `required`:
   no fallback to a raw endpoint or the cloud. Shells and commands keep working
   without inference: `iso shell` and `iso exec` warn and open the session
   without inference variables when no session can be established;
-- the instance must be a Linux guest. The relay is a Linux-guest runtime
-  feature, so a macOS guest is refused at `up`/`start` and agent launch;
-- it composes with `egress` and `network.transport`: the relay needs no
-  network device, so it works over both `brokered` and `vmnet`, and a brokered
-  boot's network policy records no provider broker and no local-model tunnel.
-  It does not change egress. Under `"filtered"` the guest keeps its approved
+- the instance must be a Linux guest on the vmnet transport: the runtime
+  relays the gateway only into vmnet Linux sandboxes (a brokered VM's one host
+  channel is its SSH stream). `required` with `network.transport` `"brokered"`
+  (the default) is a configuration error, so set
+  `"network": {"transport": "vmnet"}`; a macOS guest is refused at
+  `up`/`start` and agent launch; remote-host agents are refused;
+- it does not change egress. Under `"filtered"` the guest keeps its approved
   CONNECT hosts (agents reach the bridge directly: `127.0.0.1` is in
-  `NO_PROXY`), and under vmnet the guest can still reach services listening on
+  `NO_PROXY`), and on vmnet the guest can still reach services listening on
   the Mac's other addresses. `security.preset: "offline"` is the recommended
   pairing.
 
 Changing `inference.mode` for a running instance takes effect at its next
 start: the running boot keeps the relay setting it was started with, and
 handoffs to it are refused until it is stopped and started again. Turning the
-mode off revokes the instance's gateway session first.
+mode off revokes the instance's gateway session first; turning it on stops the
+instance's credential proxies and raw model tunnels first.
 
 ```jsonc
+"network": { "transport": "vmnet" },
 "inference": {
   "mode": "required",
   "global_limits": { "max_active_requests": 2 },
@@ -724,8 +727,8 @@ anything listening on the host's addresses (see the
 [trust model](trust-model.md#apple-sandbox-backend)).
 
 `"filtered"` uses the same host-only network as `"none"` and starts
-`iso-egress` beside the `iso` binary. It requires the current iso-sandbox
-protocol (6; the boot identity it binds to dates from protocol 5).
+`iso-egress` beside the `iso` binary. It requires iso-sandbox protocol 5 or
+later.
 A host lease renews the companion once a second only while the runtime's
 live `bootId` still matches the boot that started it, the owner lock is
 held, and the session deadline has not passed. A leftover `live.json` does
@@ -766,7 +769,7 @@ port, and allows only the `/private/var/run/mDNSResponder` UNIX socket. Before
 it reads stdin, the companion probes that writes, exec, a random port, loopback
 ports 443 and 53 and a read of the user's home are denied and that port 443 to
 a TEST-NET address is not; it refuses to start otherwise. Existing session
-handoff checks require the current protocol, compare the runtime's boot identity and
+handoff checks require protocol 5 or later, compare the runtime's boot identity and
 owner PID with bounded live state, and compare the frozen policy hash with the atomic host record
 `egress-boot-policy.json`. Network policy records must have canonical hosts
 and a matching computed hash. Older filtered sessions with only
@@ -890,7 +893,8 @@ guest's SSH adapter on vsock port 2222 (`iso-ssh-vsock.socket`, installed by
 - A local model must be served on the host's loopback (`127.0.0.1` or
   `localhost`), which iso tunnels in; any other endpoint is refused with
   `BROKERED_UNSUPPORTED`, since the guest cannot reach it directly.
-- Linux guests only. The image must carry the guest adapter: images built by
+- Linux guests only, and not with `inference.mode: "required"` (the
+  inference relay needs vmnet). The image must carry the guest adapter: images built by
   this version of `iso setup` do (`guest_adapters: ["vsock-ssh-v1"]` in the
   image manifest); older images are refused before any VM is created —
   rebuild with `iso setup --rebuild`. The runtime must advertise the
