@@ -92,6 +92,13 @@ package struct EffectiveConfig: Codable, Sendable {
     package var ipv6: String?
     package var network: String
   }
+  /// The inference relay (``InferenceRelay``): the gateway socket the owner dials, the guest
+  /// path, and the cap on connections relayed at once.
+  package struct RelayView: Codable, Sendable, Equatable {
+    package var host: String
+    package var guest: String
+    package var maxConnections: Int
+  }
   package var id: String
   package var imageReference: String
   package var imageDigest: String
@@ -100,7 +107,12 @@ package struct EffectiveConfig: Codable, Sendable {
   package var rootfs: MountView
   package var mounts: [MountView]
   package var interfaces: [InterfaceView]
+  /// The inference relay counts here, and its guest end (a socket bind mount) is not among
+  /// `mounts`.
   package var socketRelays: Int
+  /// Present only when the boot relays the inference gateway, so a report without it is
+  /// unchanged.
+  package var inferenceRelay: RelayView? = nil
   package var publishedPorts: Int
   package var sshAgentForwarding: Bool
   package var maskedPaths: [String]
@@ -123,8 +135,9 @@ package struct EffectiveConfig: Codable, Sendable {
   /// Present only for a ``DisplayMode/virtioDisplay`` sandbox, so a
   /// headless sandbox's report is unchanged: its display mode, each live
   /// graphics device's scanout sizes (`WxH`, or the class name of a
-  /// non-virtio device), the vsock ports the owner listens on, and whether
-  /// its loopback live-view listener is open now.
+  /// non-virtio device), the vsock ports the display side listens on (the
+  /// inference relay's is reported by `inferenceRelay`), and whether its
+  /// loopback live-view listener is open now.
   package var display: String? = nil
   package var graphicsDevices: [[String]]? = nil
   package var vsockPorts: [UInt32]? = nil

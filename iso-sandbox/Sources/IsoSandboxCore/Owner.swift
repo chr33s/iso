@@ -113,8 +113,12 @@ package enum Owner {
     let rootfs = Containerization.Mount.block(
       format: "ext4", source: paths.rootfs.path, destination: "/", options: [])
     let console = try ConsoleLog(url: paths.bootLog)
+    // Re-created on every boot, a launchd respawn included, from the record.
+    let relay = InferenceRelay.Endpoint.of(record, at: paths)
+    // The gateway binds the host socket in this directory; nothing else may.
+    try relay?.prepare()
     let config = machineConfiguration(
-      record: record, interface: interface, bootLog: .fileHandle(console.writer))
+      record: record, interface: interface, bootLog: .fileHandle(console.writer), relay: relay)
     let container = try LinuxContainer(
       id.rawValue, rootfs: rootfs, vmm: vmm,
       vm: machineResources(cpus: record.cpus, memoryBytes: record.memoryBytes),
@@ -129,6 +133,18 @@ package enum Owner {
       of: id, mode: record.network, display: display,
       read: { try await VMDevices.read(container) },
       stop: { try? await container.stop() })
+    let relayServer = relay.map {
+      InferenceRelayServer(endpoint: $0, expiresAt: record.expiresAt, log: { log($0) })
+    }
+    if let relayServer {
+      do {
+        try await relayServer.attach(container)
+      } catch {
+        try? await container.stop()
+        throw SandboxError(
+          "sandbox \(id) stopped unbooted: its inference relay did not start: \(error)")
+      }
+    }
     try await container.start()
 
     let live = LiveState(
@@ -181,7 +197,9 @@ package enum Owner {
       await attached?.stop()
       await counts?.record()
     }
-    let lifecycle = Lifecycle(container: container, streams: broker, onHalt: endDisplay) {
+    let lifecycle = Lifecycle(
+      container: container, streams: broker, relay: relayServer, onHalt: endDisplay
+    ) {
       log("guest did not stop: exiting the owner to end the VM")
       try? FileManager.default.removeItem(at: liveFile)
       unlink(controlSocket.path)
@@ -198,13 +216,15 @@ package enum Owner {
           try? await Task.sleep(for: .seconds(min(30, max(1, expiresAt.timeIntervalSinceNow))))
         }
         log("session expired at \(expiresAt): revoking streams and halting")
-        // Existing host-held streams are revoked first; the halt follows.
+        // Existing host-held streams and relayed connections are revoked first; the halt
+        // follows.
         broker?.shutdownAll()
+        relayServer?.shutdownAll()
         await lifecycle.requestHalt()
       }
     }
     var reported = effectiveConfig(
-      record: record, config: config, rootfs: rootfs, devices: devices)
+      record: record, config: config, rootfs: rootfs, devices: devices, relay: relay)
     if let desktop { reported.vsockPorts = await desktop.listenerPorts }
     let effective = reported
     let sessionDeadline = record.expiresAt
@@ -288,6 +308,7 @@ package enum Owner {
       log("stop error: \(error)")
     }
     broker?.shutdownAll()
+    relayServer?.shutdownAll()
     try? network?.releaseInterface(id.rawValue)
     try? FileManager.default.removeItem(at: paths.live)
     await lifecycle.markStopped()
@@ -371,9 +392,11 @@ package enum Owner {
     VMResources(cpus: cpus + 1, memoryInBytes: memoryBytes + VMResources.guestMemoryOverhead)
   }
 
-  /// `interface` is nil exactly for a brokered sandbox.
+  /// `interface` is nil exactly for a brokered sandbox; `relay` is the record's
+  /// (``InferenceRelay/Endpoint/of(_:at:)``).
   static func machineConfiguration(
-    record: SandboxRecord, interface: (any Interface)?, bootLog: BootLog
+    record: SandboxRecord, interface: (any Interface)?, bootLog: BootLog,
+    relay: InferenceRelay.Endpoint? = nil
   ) -> LinuxContainer.Configuration {
     var config = LinuxContainer.Configuration()
     var process = LinuxProcessConfiguration()
@@ -399,8 +422,10 @@ package enum Owner {
         ipAddress: interface?.ipv4Address.address.description ?? "127.0.1.1",
         hostnames: [record.id.rawValue]))
     config.hosts = hosts
-    // Kernel pseudo-filesystems only; no host shares, no socket relays.
-    config.mounts = LinuxContainer.defaultMounts()
+    // Kernel pseudo-filesystems only; no host shares. The one relay is the inference gateway's,
+    // run by the owner (``InferenceRelayServer``) rather than containerization's, so the
+    // framework relays no socket: its guest end is the bind mount below.
+    config.mounts = LinuxContainer.defaultMounts() + (relay.map { [$0.guestMount] } ?? [])
     config.sockets = []
     // systemd and dockerd need to write cgroup/sysctl state.
     config.maskedPaths = []
@@ -412,12 +437,17 @@ package enum Owner {
 
   /// `devices` is the live inventory, already checked against
   /// `VMDevices.requireExpected`; only a brokered report carries its counts.
+  /// `relay` is reported, as the one socket relay, only if its guest mount is in `config`; that
+  /// mount is then not listed among the mounts.
   static func effectiveConfig(
     record: SandboxRecord, config: LinuxContainer.Configuration, rootfs: Containerization.Mount,
-    devices: VMDevices
+    devices: VMDevices, relay: InferenceRelay.Endpoint? = nil
   ) -> EffectiveConfig {
     func view(_ m: Containerization.Mount) -> EffectiveConfig.MountView {
       .init(type: m.type, source: m.source, destination: m.destination, options: m.options)
+    }
+    let relayed = relay.flatMap { relay in
+      config.mounts.contains(where: relay.isGuestMount) ? relay : nil
     }
     var effective = EffectiveConfig(
       id: record.id.rawValue,
@@ -426,7 +456,7 @@ package enum Owner {
       cpus: config.cpus,
       memoryBytes: config.memoryInBytes,
       rootfs: view(rootfs),
-      mounts: config.mounts.map(view),
+      mounts: config.mounts.filter { !(relayed?.isGuestMount($0) ?? false) }.map(view),
       interfaces: config.interfaces.map {
         .init(
           ipv4: $0.ipv4Address.description, ipv4Gateway: $0.ipv4Gateway?.description,
@@ -435,7 +465,8 @@ package enum Owner {
             "\(record.network == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet ?? "none")"
         )
       },
-      socketRelays: config.sockets.count,
+      socketRelays: config.sockets.count + (relayed == nil ? 0 : 1),
+      inferenceRelay: relayed?.view,
       publishedPorts: 0,
       sshAgentForwarding: false,
       maskedPaths: config.maskedPaths,
@@ -513,6 +544,8 @@ actor Lifecycle {
   private let container: any HaltableContainer
   /// Closed when a halt begins: no stream outlives a stop request.
   private let streams: StreamBroker?
+  /// Closed when a halt begins too: no relayed inference connection outlives it.
+  private let relay: InferenceRelayServer?
   /// Run when a halt begins, for what else must not outlive it (the
   /// display's live view). Not awaited: it must not delay the halt.
   private let onHalt: @Sendable () async -> Void
@@ -526,6 +559,7 @@ actor Lifecycle {
   init(
     container: any HaltableContainer,
     streams: StreamBroker? = nil,
+    relay: InferenceRelayServer? = nil,
     onHalt: @escaping @Sendable () async -> Void = {},
     haltGrace: Duration = .seconds(Owner.haltGraceSeconds),
     killGrace: Duration = .seconds(Owner.killGraceSeconds),
@@ -533,6 +567,7 @@ actor Lifecycle {
   ) {
     self.container = container
     self.streams = streams
+    self.relay = relay
     self.onHalt = onHalt
     self.haltGrace = haltGrace
     self.killGrace = killGrace
@@ -550,6 +585,7 @@ actor Lifecycle {
     halting = true
     Owner.log("halt requested")
     streams?.shutdownAll()
+    relay?.shutdownAll()
     let onHalt = self.onHalt
     Task { await onHalt() }
     let container = self.container
