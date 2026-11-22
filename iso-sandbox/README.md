@@ -7,9 +7,11 @@ below; see [`docs/backends.md`](../docs/backends.md) for the isolate side and
 [`docs/trust-model.md`](../docs/trust-model.md) for the isolation contract.
 
 Each sandbox is one Linux VM running systemd from its own ext4 disk, on its own
-vmnet network (or, `--network brokered`, with no network device), with no host mounts, socket relays, published ports, or SSH-agent
-forwarding. The sandbox record has no field for any of those, so they cannot be
-configured. A running sandbox is owned by one `iso-sandbox run` process, which
+vmnet network (or, `--network brokered`, with no network device), with no host
+mounts, published ports, or SSH-agent forwarding, and no socket relay except the
+optional [inference relay](#behaviour-worth-knowing). The sandbox record has no
+field for any of those, so they cannot be configured; the relay's one field
+only switches it on, and its paths are fixed or derived. A running sandbox is owned by one `iso-sandbox run` process, which
 holds the VM (Virtualization.framework runs it in-process) and serves a
 peer-UID-checked 0600 Unix socket for exec/stop/inspect. `start` loads that
 owner as a launchd job from a plist in the sandbox directory and explicitly
@@ -37,7 +39,7 @@ runtime and `iso-sandbox.entitlements` (the Enhanced Security entitlements plus
 The package deploys to macOS 27 and uses its task cancellation shielding API for
 guest-process cleanup.
 
-## CLI (protocol 5)
+## CLI (protocol 6)
 
 Every command except `version` takes `--root <absolute path>`, the state root.
 It is canonicalized with realpath(3), and every path the runtime reports lies
@@ -49,20 +51,24 @@ version                                   {name, version, protocol, containeriza
 init --kernel K                           pinned kernel (sha256 allowlist) + vminit 0.54.0 initfs
 image import --oci-tar T | image list | image delete REF
 create ID (--image REF | --from-disk NAME) --cpus N --memory-mib M --disk-gib G --owner O
-       [--network shared|host-only|brokered]
+       [--network shared|host-only|brokered] [--inference-relay]
                                           host-only: vmnet host mode, no route beyond the host;
-                                          brokered: no network device, vsock streams only
+                                          brokered: no network device, vsock streams only;
+                                          --inference-relay: record.inferenceRelay (not brokered)
 start ID [--wait-seconds S] [--expires-at UNIX] [--network-policy DIGEST]
+         [--inference-relay on|off]
                                           launchd job; returns once the owner answers;
                                           the owner halts the VM at the deadline; a brokered
-                                          boot's streams must present DIGEST
+                                          boot's streams must present DIGEST; on/off switches
+                                          the inference relay from this boot on, omitted keeps it
 connect ID --boot B --channel-policy D [--network-policy D] [--session S] [--purpose ssh]
                                           ssh ProxyCommand: one owner-admitted guest stream
 streams list ID | streams close ID [--session S]
                                           a brokered sandbox's open streams
 stop ID [--timeout-seconds S]             systemd halt (SIGRTMIN+3), then unload the job
 exec [-i] [--timeout S] ID -- ARGV        root, over vsock; exit code is passed through
-inspect ID                                {record, status, live, effective, disk}
+inspect ID                                {record, status, live, effective, disk};
+                                          effective.inferenceRelay when the boot relays
 list                                      [{id, status, owner}]
 set ID [--cpus N] [--memory-mib M] [--operation OP] [--expect-operation OP]
                                           stopped only; applied at the next start
@@ -156,6 +162,30 @@ never overwrites a newer one.
   8 MiB: past the cap the file restarts with a marker line, so a guest
   flooding its console cannot fill the host disk. `logs -n` reads only the
   file's last 256 KiB.
+- **Inference relay.** A Linux sandbox created with `--inference-relay`, or
+  started with `--inference-relay on`, relays the iso inference gateway's
+  socket for it into the guest at `/var/lib/iso-inference/gateway.sock`
+  (outside `/run`, which systemd mounts over). The record holds only
+  `inferenceRelay: true`; the host end is derived like the control socket,
+  `<per-user temp>/iso-sbx/inference/<hash of the sandbox directory>.sock`, in a
+  directory the owner creates `0700` or refuses unless it is a real directory
+  owned by the user and closed to everyone else. The owner runs the relay itself
+  on containerization's public API, not the framework's socket relay: it listens
+  on host vsock port 7803, and the guest agent (vminitd) serves the guest path
+  and dials that port per connection. At most 32 connections are relayed at
+  once; one arriving at the limit, after a halt or past the session deadline is
+  closed before the gateway is dialed. Each connection is dialed only if the
+  host path is a socket the user owns (not a symlink) served by the same user.
+  The gateway closing its end ends the connection once every byte it sent has
+  reached the guest, so an idle guest cannot keep a slot the gateway has
+  closed, and a guest that stops reading for 30 s loses the connection. A halt
+  or the session deadline closes every relayed connection. The owner sets the
+  relay up again on every boot, a launchd respawn included, and touches the
+  relay directory and socket hourly so the temporary-directory cleaner keeps
+  them (the sandboxed gateway cannot). `inspect` reports it as
+  `effective.inferenceRelay: {host, guest, maxConnections}`, counted in
+  `socketRelays`; its guest end is not listed among `mounts`. A brokered
+  sandbox cannot have it, and macOS guests have no relay.
 - **Stop.** `stop` asks systemd to halt and forces the VM down after 60 s.
   Killing the owner powers the VM off: journaled ext4 recovers, but unsynced
   guest writes can be lost.
