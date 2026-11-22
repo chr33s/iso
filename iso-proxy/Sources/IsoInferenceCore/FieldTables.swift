@@ -36,8 +36,12 @@ enum Size {
 enum Tables {
   static let text: Schema = .string(maxBytes: Size.text)
   static let identifier: Schema = .string(maxBytes: Size.identifier)
-  static let droppedObject: Schema = .opaque(maxBytes: Size.smallObject)
-  static let droppedLarge: Schema = .opaque(maxBytes: Size.text)
+  // Dropped values are type-checked and bounded, never forwarded; their
+  // contents are not validated member by member.
+  static let droppedObject: Schema = .opaqueObject(maxBytes: Size.smallObject)
+  static let droppedLargeObject: Schema = .opaqueObject(maxBytes: Size.text)
+  static let droppedLargeArray: Schema = .opaqueArray(maxBytes: Size.text)
+  static let jsonSchema: Schema = .opaque(maxBytes: Size.toolSchema)
   static let outputLimit: Schema = .integer(1...10_000_000)
 
   // Backend-specific knobs that select models, adapters or templates on the
@@ -56,7 +60,7 @@ enum Tables {
   static let anthropicText = ObjectSchema(
     [
       "type": .forward(.enumeration(["text"])), "text": .forward(text),
-      "cache_control": cacheControl, "citations": .drop(droppedLarge),
+      "cache_control": cacheControl, "citations": .drop(.anyOf([.null, droppedLargeArray])),
     ], required: ["text"])
 
   static let anthropicToolResultContent: Schema = .anyOf([
@@ -86,7 +90,7 @@ enum Tables {
         ],
         // Prior-turn reasoning carries provider signatures a local model
         // cannot use; removing it cannot widen authority.
-        dropped: ["thinking": droppedLarge, "redacted_thinking": droppedLarge],
+        dropped: ["thinking": droppedLargeObject, "redacted_thinking": droppedLargeObject],
         denied: [
           "image", "document", "search_result", "server_tool_use", "web_search_tool_result",
           "web_fetch_tool_result", "code_execution_tool_result", "mcp_tool_use",
@@ -107,10 +111,10 @@ enum Tables {
   static let anthropicCustomTool = ObjectSchema(
     [
       "type": .forward(.enumeration(["custom"])), "name": .forward(identifier),
-      "description": .forward(text), "input_schema": .forward(.opaque(maxBytes: Size.toolSchema)),
+      "description": .forward(text), "input_schema": .forward(jsonSchema),
       "cache_control": cacheControl, "strict": .drop(.bool),
       "eager_input_streaming": .drop(.bool), "defer_loading": .drop(.bool),
-      "input_examples": .drop(droppedLarge),
+      "input_examples": .drop(droppedLargeArray),
     ], required: ["name", "input_schema"])
 
   /// Server-tool declarations (`web_search_20250305` and the like) are
@@ -169,7 +173,7 @@ enum Tables {
       "top_k": .forward(.integer(0...1_000)),
       // Claude Code's auto-mode classifier context: host paths and rules
       // with no meaning to a local model.
-      "safeguards": .drop(droppedLarge),
+      "safeguards": .drop(droppedLargeArray),
       "service_tier": .drop(identifier),
       "inference_geo": .drop(identifier),
     ]) { a, _ in a }, required: ["model", "messages", "max_tokens"])
@@ -191,7 +195,7 @@ enum Tables {
             "output_text": ObjectSchema(
               [
                 "type": .forward(.enumeration(["output_text"])), "text": .forward(text),
-                "annotations": .drop(droppedLarge), "logprobs": .drop(droppedLarge),
+                "annotations": .drop(droppedLargeArray), "logprobs": .drop(droppedLargeArray),
               ], required: ["text"]),
             "refusal": ObjectSchema(
               ["type": .forward(.enumeration(["refusal"])), "refusal": .forward(text)],
@@ -253,7 +257,7 @@ enum Tables {
         ],
         // Encrypted provider reasoning and compaction summaries cannot be
         // read by a local model.
-        dropped: ["reasoning": droppedLarge, "compaction": droppedLarge],
+        dropped: ["reasoning": droppedLargeObject, "compaction": droppedLargeObject],
         denied: [
           "item_reference", "web_search_call", "file_search_call", "computer_call",
           "computer_call_output", "image_generation_call", "code_interpreter_call",
@@ -266,9 +270,50 @@ enum Tables {
   static let responsesFunctionTool = ObjectSchema(
     [
       "type": .forward(.enumeration(["function"])), "name": .forward(identifier),
-      "description": .forward(text), "parameters": .forward(.opaque(maxBytes: Size.toolSchema)),
+      "description": .forward(text), "parameters": .forward(jsonSchema),
       "strict": .forward(.bool), "defer_loading": .drop(.bool),
     ], required: ["name"])
+
+  /// Custom (freeform) tools take plain text or a grammar-constrained input.
+  static let responsesCustomFormat: Schema = .tagged(
+    TaggedSchema(variants: [
+      "text": ObjectSchema(["type": .forward(.enumeration(["text"]))]),
+      "grammar": ObjectSchema(
+        [
+          "type": .forward(.enumeration(["grammar"])),
+          "syntax": .forward(.enumeration(["lark", "regex"])),
+          "definition": .forward(.string(maxBytes: Size.toolSchema)),
+        ], required: ["syntax", "definition"]),
+    ]))
+
+  /// A forced tool choice names a declared function or custom tool. Hosted
+  /// tools are dropped from `tools`, so naming one is unsupported; `mcp` is
+  /// denied as it is in `tools`.
+  static let responsesToolChoice: Schema = .anyOf([
+    .enumeration(["auto", "none", "required"]),
+    .tagged(
+      TaggedSchema(
+        variants: [
+          "function": ObjectSchema(
+            ["type": .forward(.enumeration(["function"])), "name": .forward(identifier)],
+            required: ["name"]),
+          "custom": ObjectSchema(
+            ["type": .forward(.enumeration(["custom"])), "name": .forward(identifier)],
+            required: ["name"]),
+        ], denied: ["mcp"])),
+  ])
+
+  static let responsesTextFormat: Schema = .tagged(
+    TaggedSchema(variants: [
+      "text": ObjectSchema(["type": .forward(.enumeration(["text"]))]),
+      "json_object": ObjectSchema(["type": .forward(.enumeration(["json_object"]))]),
+      "json_schema": ObjectSchema(
+        [
+          "type": .forward(.enumeration(["json_schema"])), "name": .forward(identifier),
+          "description": .forward(text), "schema": .forward(jsonSchema),
+          "strict": .forward(.bool),
+        ], required: ["name", "schema"]),
+    ]))
 
   static let hostedTools: [String: Schema] = [
     "web_search": droppedObject, "web_search_preview": droppedObject,
@@ -285,7 +330,7 @@ enum Tables {
           "custom": ObjectSchema(
             [
               "type": .forward(.enumeration(["custom"])), "name": .forward(identifier),
-              "description": .forward(text), "format": .forward(.opaque(maxBytes: Size.toolSchema)),
+              "description": .forward(text), "format": .forward(responsesCustomFormat),
             ], required: ["name"]),
           "namespace": ObjectSchema(
             [
@@ -306,10 +351,7 @@ enum Tables {
       "input": .forward(.anyOf([text, responsesItems])),
       "instructions": .forward(text),
       "tools": .forward(responsesTools),
-      "tool_choice": .forward(
-        .anyOf([
-          .enumeration(["auto", "none", "required"]), .opaque(maxBytes: Size.smallObject),
-        ])),
+      "tool_choice": .forward(responsesToolChoice),
       "parallel_tool_calls": .forward(.bool),
       "max_output_tokens": .rewrite(outputLimit),
       "temperature": .forward(.number(0...2)),
@@ -319,7 +361,7 @@ enum Tables {
       "text": .forward(
         .object(
           ObjectSchema([
-            "format": .forward(.opaque(maxBytes: Size.toolSchema)), "verbosity": .drop(identifier),
+            "format": .forward(responsesTextFormat), "verbosity": .drop(identifier),
           ]))),
       "include": .drop(.array(identifier, maxCount: 64)),
       "reasoning": .drop(droppedObject),
@@ -395,7 +437,7 @@ enum Tables {
             "content": .forward(.anyOf([.null, chatTextContent])),
             "name": .forward(identifier), "tool_calls": .forward(chatToolCalls),
             "refusal": .forward(.anyOf([.null, text])),
-            "reasoning_content": .drop(droppedLarge), "audio": .deny,
+            "reasoning_content": .drop(text), "audio": .deny,
           ]),
           "tool": ObjectSchema(
             [
@@ -405,6 +447,37 @@ enum Tables {
         ],
         denied: ["function"])),
     maxCount: Size.messages)
+
+  /// A forced tool choice names a declared function.
+  static let chatToolChoice: Schema = .anyOf([
+    .enumeration(["auto", "none", "required"]),
+    .tagged(
+      TaggedSchema(variants: [
+        "function": ObjectSchema(
+          [
+            "type": .forward(.enumeration(["function"])),
+            "function": .forward(
+              .object(ObjectSchema(["name": .forward(identifier)], required: ["name"]))),
+          ], required: ["function"])
+      ])),
+  ])
+
+  static let chatResponseFormat: Schema = .tagged(
+    TaggedSchema(variants: [
+      "text": ObjectSchema(["type": .forward(.enumeration(["text"]))]),
+      "json_object": ObjectSchema(["type": .forward(.enumeration(["json_object"]))]),
+      "json_schema": ObjectSchema(
+        [
+          "type": .forward(.enumeration(["json_schema"])),
+          "json_schema": .forward(
+            .object(
+              ObjectSchema(
+                [
+                  "name": .forward(identifier), "description": .forward(text),
+                  "schema": .forward(jsonSchema), "strict": .forward(.bool),
+                ], required: ["name"]))),
+        ], required: ["json_schema"]),
+    ]))
 
   static let chat = ObjectSchema(
     hostSelected.merging([
@@ -433,17 +506,14 @@ enum Tables {
                     ObjectSchema(
                       [
                         "name": .forward(identifier), "description": .forward(text),
-                        "parameters": .forward(.opaque(maxBytes: Size.toolSchema)),
+                        "parameters": .forward(jsonSchema),
                         "strict": .forward(.bool),
                       ], required: ["name"]))),
               ], required: ["type", "function"])),
           maxCount: Size.tools)),
-      "tool_choice": .forward(
-        .anyOf([
-          .enumeration(["auto", "none", "required"]), .opaque(maxBytes: Size.smallObject),
-        ])),
+      "tool_choice": .forward(chatToolChoice),
       "parallel_tool_calls": .forward(.bool),
-      "response_format": .forward(.opaque(maxBytes: Size.toolSchema)),
+      "response_format": .forward(chatResponseFormat),
       "user": .drop(identifier), "metadata": .drop(droppedObject), "store": .drop(.bool),
       "service_tier": .drop(identifier), "prompt_cache_key": .drop(identifier),
       "safety_identifier": .drop(identifier), "reasoning_effort": .drop(identifier),

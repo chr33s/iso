@@ -47,8 +47,8 @@ package enum HeaderTable {
         }
       case "content-type":
         contentTypes += 1
-        let media = value.split(separator: ";", maxSplits: 1)[0]
-          .trimmed(of: " \t").lowercased()
+        // The media type is everything before the first `;`, possibly empty.
+        let media = value.prefix { $0 != ";" }.trimmed(of: " \t").lowercased()
         guard media == "application/json" else {
           throw InferenceError(.requestInvalid, "request bodies must be application/json")
         }

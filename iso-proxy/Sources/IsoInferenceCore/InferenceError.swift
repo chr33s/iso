@@ -69,6 +69,34 @@ package struct InferenceError: Error, Sendable, Equatable {
     return detail.serialized
   }
 
+  /// The protocol's in-stream error event, for a client whose streamed
+  /// response has already started (§13).
+  package func streamEvent(for api: FrontendAPI?) -> [UInt8] {
+    switch api {
+    case .anthropicMessages?:
+      let data = JSON.object(
+        JSONObject([
+          "type": .string("error"),
+          "error": .object(
+            JSONObject([
+              "type": .string(
+                anthropicType == "overloaded_error" ? "overloaded_error" : "api_error"),
+              "message": .string(message), "code": .string(code.rawValue),
+            ])),
+        ]))
+      return SSEEvent.encode(name: "error", data: data.serialized)
+    case .openAIResponses?:
+      let data = JSON.object(
+        JSONObject([
+          "type": .string("error"), "code": .string(code.rawValue),
+          "message": .string(message),
+        ]))
+      return SSEEvent.encode(name: "error", data: data.serialized)
+    default:
+      return SSEEvent.encode(name: nil, data: body(for: .openAIChat))
+    }
+  }
+
   var anthropicType: String {
     switch code.status {
     case 401: "authentication_error"

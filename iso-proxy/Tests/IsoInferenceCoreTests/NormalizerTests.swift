@@ -207,3 +207,149 @@ func codexFixturesPassTheResponsesTable(_ name: String) throws {
     }
   }
 }
+
+@Test(arguments: ["", ";", " ;", ";charset=utf-8", "\t; charset=utf-8"])
+func contentTypeWithoutAMediaTypeIsRefused(_ value: String) {
+  let headers = [Header("content-type", value), Header("authorization", "Bearer x")]
+  #expect(throws: InferenceError(.requestInvalid, "request bodies must be application/json")) {
+    try HeaderTable.check(headers, hasBody: true)
+  }
+}
+
+@Test func contentTypeParametersAreAllowed() throws {
+  try HeaderTable.check(
+    [Header("content-type", "Application/JSON ; charset=utf-8")], hasBody: true)
+}
+
+/// Fields that are dropped are still type-checked: their value is never
+/// forwarded, but a wrong JSON type fails the request (§8.3.1).
+@Test func droppedFieldsAreTypeChecked() throws {
+  let cases: [(FrontendAPI, String)] = [
+    (.anthropicMessages, #"{"model":"local-coder","messages":[],"max_tokens":5,"metadata":5}"#),
+    (.anthropicMessages, #"{"model":"local-coder","messages":[],"max_tokens":5,"thinking":"x"}"#),
+    (.anthropicMessages, #"{"model":"local-coder","messages":[],"max_tokens":5,"safeguards":{}}"#),
+    (.openAIChat, #"{"model":"local-coder","messages":[],"metadata":[1]}"#),
+    (.openAIResponses, #"{"model":"local-coder","input":"hi","reasoning":true}"#),
+    (.openAIResponses, #"{"model":"local-coder","input":"hi","client_metadata":"x"}"#),
+  ]
+  for (api, text) in cases {
+    let backend: BackendProtocol =
+      api == .openAIChat
+      ? .openAIChat : api == .openAIResponses ? .openAIResponses : .anthropicMessages
+    do {
+      _ = try Normalizer.normalize(
+        api: api, body: body(text), grants: ["local-coder": grant(backend)])
+      Issue.record("accepted \(text)")
+    } catch {
+      #expect(error.code == .requestInvalid, "\(text)")
+    }
+  }
+}
+
+/// `tool_choice`, `response_format` and `text.format` are closed to their
+/// documented shapes; only the JSON Schema body inside a structured-output
+/// format is opaque.
+@Test func structuredChoicesAreClosed() throws {
+  let chat = ["local-coder": grant(.openAIChat)]
+  let responses = ["local-coder": grant(.openAIResponses)]
+  let refused: [(FrontendAPI, String, InferenceErrorCode)] = [
+    (
+      .openAIChat, #""tool_choice":{"type":"function","function":{"name":"f"},"extra":1}"#,
+      .unsupported
+    ),
+    (
+      .openAIChat, #""tool_choice":{"type":"function","function":{"name":"f","adapter":"/x"}}"#,
+      .unsupported
+    ),
+    (.openAIChat, #""tool_choice":{"type":"web_search"}"#, .unsupported),
+    (.openAIChat, #""tool_choice":5"#, .requestInvalid),
+    (
+      .openAIChat,
+      #""response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{}},"draft_model":"y"}"#,
+      .unsupported
+    ),
+    (.openAIChat, #""response_format":{"type":"grammar"}"#, .unsupported),
+    (
+      .openAIResponses, #""tool_choice":{"type":"mcp","server_label":"x","server_url":"http://x"}"#,
+      .policyDenied
+    ),
+    (
+      .openAIResponses, #""tool_choice":{"type":"function","name":"f","server_url":"http://x"}"#,
+      .unsupported
+    ),
+    (.openAIResponses, #""tool_choice":{"type":"web_search_preview"}"#, .unsupported),
+    (
+      .openAIResponses,
+      #""text":{"format":{"type":"json_schema","name":"x","schema":{},"url":"http://x"}}"#,
+      .unsupported
+    ),
+    (.openAIResponses, #""text":{"format":{"type":"text","x":1}}"#, .unsupported),
+  ]
+  for (api, extra, code) in refused {
+    let text =
+      api == .openAIChat
+      ? #"{"model":"local-coder","messages":[{"role":"user","content":"hi"}],\#(extra)}"#
+      : #"{"model":"local-coder","input":"hi",\#(extra)}"#
+    do {
+      _ = try Normalizer.normalize(
+        api: api, body: body(text), grants: api == .openAIChat ? chat : responses)
+      Issue.record("accepted \(extra)")
+    } catch {
+      #expect(error.code == code, "\(extra)")
+    }
+  }
+  let chatAccepted = try Normalizer.normalize(
+    api: .openAIChat,
+    body: body(
+      #"{"model":"local-coder","messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"function","function":{"name":"f"}},"response_format":{"type":"json_schema","json_schema":{"name":"x","strict":true,"schema":{"type":"object","properties":{"a":{"type":"string"}}}}}}"#
+    ), grants: chat)
+  let forwarded = try json(String(decoding: chatAccepted.upstreamBody, as: UTF8.self))
+  #expect(forwarded["tool_choice"]?["function"]?["name"]?.string == "f")
+  #expect(
+    forwarded["response_format"]?["json_schema"]?["schema"]?["properties"]?["a"]?["type"]?.string
+      == "string")
+  let responsesAccepted = try Normalizer.normalize(
+    api: .openAIResponses,
+    body: body(
+      #"{"model":"local-coder","input":"hi","tool_choice":{"type":"function","name":"f"},"text":{"format":{"type":"json_schema","name":"x","schema":{"type":"object"}},"verbosity":"low"}}"#
+    ), grants: responses)
+  let upstream = try json(String(decoding: responsesAccepted.upstreamBody, as: UTF8.self))
+  #expect(upstream["tool_choice"]?["name"]?.string == "f")
+  #expect(upstream["text"]?["format"]?["schema"]?["type"]?.string == "object")
+  #expect(upstream["text"]?["verbosity"] == nil)
+}
+
+/// Integer fields take integer syntax only, and are forwarded in canonical
+/// form rather than as the guest's text.
+@Test func integerFieldsAreExactAndCanonical() throws {
+  let grants = ["local-coder": grant(.anthropicMessages)]
+  for value in ["0.99999999999999999999", "1e-400", "1.0", "1e3", "10.5"] {
+    let text = #"{"model":"local-coder","messages":[],"max_tokens":\#(value)}"#
+    do {
+      _ = try Normalizer.normalize(api: .anthropicMessages, body: body(text), grants: grants)
+      Issue.record("accepted max_tokens \(value)")
+    } catch {
+      #expect(error.code == .requestInvalid, "\(value)")
+    }
+  }
+  let request = try Normalizer.normalize(
+    api: .anthropicMessages,
+    body: body(#"{"model":"local-coder","messages":[],"max_tokens":5,"top_k":-0}"#),
+    grants: grants)
+  #expect(String(decoding: request.upstreamBody, as: UTF8.self).contains(#""top_k":0"#))
+}
+
+/// A body of many tiny values fails before its parse tree outgrows the
+/// body by more than a fixed factor.
+@Test func parseTreeIsBoundedByTheValueCount() throws {
+  let elements = Array(repeating: "0", count: 200_000).joined(separator: ",")
+  let text =
+    #"{"model":"local-coder","messages":[],"max_tokens":5,"stop_sequences":[\#(elements)]}"#
+  do {
+    _ = try Normalizer.normalize(
+      api: .anthropicMessages, body: body(text), grants: ["local-coder": grant(.anthropicMessages)])
+    Issue.record("parsed 200,000 values")
+  } catch {
+    #expect(error.code == .requestTooLarge)
+  }
+}

@@ -33,6 +33,8 @@ package enum Normalizer {
     } catch {
       switch error {
       case .tooLarge: throw InferenceError(.requestTooLarge, "request body is too large")
+      case .tooManyValues:
+        throw InferenceError(.requestTooLarge, "request body has too many JSON values")
       case .tooDeep: throw InferenceError(.requestInvalid, "request body is nested too deeply")
       case .duplicateKey: throw InferenceError(.requestInvalid, "request body has a duplicate key")
       case .invalidUTF8: throw InferenceError(.requestInvalid, "request body is not valid UTF-8")

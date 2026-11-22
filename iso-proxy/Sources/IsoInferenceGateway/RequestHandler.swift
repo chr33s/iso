@@ -607,7 +607,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     gateway.audit.rejected(session: session.id, code: error.code)
     guard !clientGone, let context, phase != .done else { return }
     if responseStarted {
-      write(streamError(error))
+      write(error.streamEvent(for: api))
       return
     }
     responseStarted = true
@@ -622,30 +622,6 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       ]))
     context.write(wrapOutboundOut(.head(head)), promise: nil)
     context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-  }
-
-  private func streamError(_ error: InferenceError) -> [UInt8] {
-    switch api {
-    case .anthropicMessages?:
-      let data = JSON.object(
-        JSONObject([
-          "type": .string("error"),
-          "error": .object(
-            JSONObject([
-              "type": .string("overloaded_error"), "message": .string(error.message),
-            ])),
-        ]))
-      return SSEEvent.encode(name: "error", data: data.serialized)
-    case .openAIResponses?:
-      let data = JSON.object(
-        JSONObject([
-          "type": .string("error"), "code": .string(error.code.rawValue),
-          "message": .string(error.message),
-        ]))
-      return SSEEvent.encode(name: "error", data: data.serialized)
-    default:
-      return SSEEvent.encode(name: nil, data: error.body(for: .openAIChat))
-    }
   }
 
   private func respond(status: HTTPResponseStatus, body: [UInt8], contentType: String) {

@@ -14,14 +14,20 @@ package indirect enum Schema: Sendable {
   case tagged(TaggedSchema)
   /// Chosen by the value's JSON type, in order.
   case anyOf([Schema])
-  /// Any JSON, bounded by its serialized size (tool schemas, tool inputs).
+  /// Any JSON, bounded by its serialized size. Forwarded only for JSON
+  /// Schema bodies and the model's own tool-call input.
   case opaque(maxBytes: Int)
+  /// A JSON object whose members are not individually checked, bounded by
+  /// its serialized size. Only for dropped fields: never forwarded.
+  case opaqueObject(maxBytes: Int)
+  /// The same for a JSON array.
+  case opaqueArray(maxBytes: Int)
 
   fileprivate func accepts(_ value: JSON) -> Bool {
     switch (self, value) {
     case (.string, .string), (.enumeration, .string), (.integer, .number), (.number, .number),
       (.bool, .bool), (.null, .null), (.array, .array), (.object, .object), (.tagged, .object),
-      (.opaque, _):
+      (.opaqueObject, .object), (.opaqueArray, .array), (.opaque, _):
       true
     case (.anyOf(let options), _): options.contains { $0.accepts(value) }
     default: false
@@ -154,7 +160,7 @@ package enum SchemaValidator {
         throw InferenceError(
           .requestInvalid, "field '\(path)' must be in \(range.lowerBound)...\(range.upperBound)")
       }
-      return value
+      return .int(int)
     case .number(let range):
       guard case .number(let number) = value, let double = number.double, double.isFinite else {
         throw typeError(path, "a number", value)
@@ -202,10 +208,13 @@ package enum SchemaValidator {
       }
       return try validate(value, chosen, path: path, rewrites: &rewrites)
     case .opaque(let maxBytes):
-      guard value.serialized.count <= maxBytes else {
-        throw InferenceError(.requestTooLarge, "field '\(path)' exceeds \(maxBytes) bytes")
-      }
-      return value
+      return try bounded(value, maxBytes, path: path)
+    case .opaqueObject(let maxBytes):
+      guard case .object = value else { throw typeError(path, "an object", value) }
+      return try bounded(value, maxBytes, path: path)
+    case .opaqueArray(let maxBytes):
+      guard case .array = value else { throw typeError(path, "an array", value) }
+      return try bounded(value, maxBytes, path: path)
     }
   }
 
@@ -236,6 +245,13 @@ package enum SchemaValidator {
       throw InferenceError(.unsupported, "'\(displayName(tag))' at '\(path)' is not supported")
     }
     return try validateObject(object, variant, path: path, rewrites: &rewrites)
+  }
+
+  static func bounded(_ value: JSON, _ maxBytes: Int, path: String) throws(InferenceError) -> JSON {
+    guard value.serialized.count <= maxBytes else {
+      throw InferenceError(.requestTooLarge, "field '\(path)' exceeds \(maxBytes) bytes")
+    }
+    return value
   }
 
   static func typeError(_ path: String, _ expected: String, _ value: JSON) -> InferenceError {

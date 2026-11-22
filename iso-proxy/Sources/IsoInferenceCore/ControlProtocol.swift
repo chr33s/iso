@@ -346,17 +346,22 @@ package enum ControlProtocol {
       return api
     }
     guard !apis.isEmpty else { throw InferenceError(.requestInvalid, "a grant needs an API") }
-    for api in apis where api.backendProtocol.map({ $0 != profile.backendProtocol }) ?? false {
+    for api in apis {
+      guard let needed = api.backendProtocol, needed != profile.backendProtocol else { continue }
       throw InferenceError(
         .protocolUnsupported,
-        "\(api.rawValue) needs a \(api.backendProtocol!.rawValue) backend; '\(alias)' is \(profile.backendProtocol.rawValue)"
+        "\(api.rawValue) needs a \(needed.rawValue) backend; '\(alias)' is \(profile.backendProtocol.rawValue)"
       )
     }
     if apis.contains(.anthropicCountTokens), profile.tokenCounter != .backend {
       throw InferenceError(
         .protocolUnsupported, "anthropic-count-tokens needs a qualified exact token counter")
     }
-    let maxOutput = try r.bounded("max_output_tokens", 1...SessionLimits.generatedTokensPerMinute)
+    // The output ceiling must fit the context window: the gateway clamps
+    // every request's output to it, and a larger ceiling could never be met.
+    let maxContext = try r.bounded("max_context_tokens", 1...10_000_000)
+    let maxOutput = try r.bounded(
+      "max_output_tokens", 1...min(SessionLimits.generatedTokensPerMinute, maxContext))
     let defaultOutput = try r.bounded("default_output_tokens", 1...maxOutput)
     let credential = try b.optionalString("credential", maxBytes: 4096).map(Secret.init)
     return ServiceGrant(
@@ -365,7 +370,7 @@ package enum ControlProtocol {
         id: BackendID(port: try b.port("port")), name: try b.string("name", maxBytes: 128),
         maxActive: try b.bounded("max_active", 1...64), profile: profile, credential: credential),
       upstreamModel: try r.string("upstream_model", maxBytes: 1024), apis: Set(apis),
-      maxContextTokens: try r.bounded("max_context_tokens", 1...10_000_000),
+      maxContextTokens: maxContext,
       defaultOutputTokens: defaultOutput, maxOutputTokens: maxOutput,
       maxInputBytes: try r.optionalInt("max_input_bytes").map { value throws(InferenceError) in
         guard (1...(64 << 20)).contains(value) else {

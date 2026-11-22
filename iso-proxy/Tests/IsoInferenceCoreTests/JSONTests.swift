@@ -45,9 +45,21 @@ private let limits = JSONParser.Limits(maxBytes: 1 << 20, maxDepth: 8)
   #expect(value.serializedString == #""a\u0001\"\\\r\t""#)
 }
 
-@Test func integralNumbersReadAsIntegers() throws {
-  #expect(try json("1.0").number?.int64 == 1)
-  #expect(try json("1e3").number?.int64 == 1000)
-  #expect(try json("1.5").number?.int64 == nil)
-  #expect(try json("123456789012345678901234567890").number?.int64 == nil)
+@Test func integersNeedIntegerSyntax() throws {
+  #expect(try json("-0").number?.int64 == 0)
+  #expect(try json("9223372036854775807").number?.int64 == .max)
+  for text in ["0.99999999999999999999", "1e-400", "1.0", "1e3", "9223372036854775808"] {
+    #expect(try json(text).number?.int64 == nil, "\(text)")
+  }
+}
+
+@Test func valueCountIsBounded() throws {
+  let limits = JSONParser.Limits(maxBytes: 1 << 20, maxDepth: 8, maxValues: 10)
+  _ = try JSONParser.parse(Array("[1,2,3,4,5,6,7,8,9]".utf8), limits: limits)
+  #expect(throws: JSONParseError.tooManyValues) {
+    try JSONParser.parse(Array("[1,2,3,4,5,6,7,8,9,10]".utf8), limits: limits)
+  }
+  #expect(throws: JSONParseError.tooManyValues) {
+    try JSONParser.parse(Array(#"{"a":{"b":{"c":{"d":{"e":[1,2,3,4,5]}}}}}"#.utf8), limits: limits)
+  }
 }

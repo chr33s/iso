@@ -49,14 +49,10 @@ package struct JSONNumber: Sendable, Equatable {
   init(validated text: String) { self.text = text }
   package init(_ value: Int64) { text = String(value) }
 
-  package var int64: Int64? {
-    if let exact = Int64(text) { return exact }
-    // `1.0` and `1e3` are integral in JSON even though Int64 rejects them.
-    guard let double = Double(text), double.rounded() == double, abs(double) < 9.0e15 else {
-      return nil
-    }
-    return Int64(double)
-  }
+  /// The value of integer text (`-?(0|[1-9][0-9]*)`) within Int64. Text with
+  /// a fraction or exponent is not an integer, even when its value is
+  /// integral: no rounding decides what a field means.
+  package var int64: Int64? { Int64(text) }
   package var double: Double? { Double(text) }
 }
 
@@ -94,26 +90,39 @@ package struct JSONObject: Sendable, Equatable {
 
 /// Parse failures carry no input bytes: request bodies are guest-controlled.
 package enum JSONParseError: Error, Sendable, Equatable {
-  case tooLarge, tooDeep, duplicateKey, invalidUTF8, syntax, trailingData
+  case tooLarge, tooDeep, tooManyValues, duplicateKey, invalidUTF8, syntax, trailingData
 }
 
 /// A strict RFC 8259 parser for untrusted request and response bodies:
-/// bounded input size and nesting depth, duplicate keys rejected at every
-/// level, invalid UTF-8 and unpaired surrogates rejected, no trailing data.
+/// bounded input size, nesting depth and value count, duplicate keys
+/// rejected at every level, invalid UTF-8 and unpaired surrogates rejected,
+/// no trailing data.
 package enum JSONParser {
   package struct Limits: Sendable {
     package let maxBytes: Int
     package let maxDepth: Int
-    package init(maxBytes: Int, maxDepth: Int) {
+    /// Every scalar, array, object and object member counts once. The parse
+    /// tree costs tens of bytes per value whatever its source text, so this
+    /// bounds the tree that `maxBytes` alone does not.
+    package let maxValues: Int
+
+    package init(maxBytes: Int, maxDepth: Int, maxValues: Int) {
       self.maxBytes = maxBytes
       self.maxDepth = maxDepth
+      self.maxValues = maxValues
+    }
+
+    /// One value per 32 bytes of the size limit, plus a floor for small
+    /// documents. Recorded client requests average about 100 bytes a value.
+    package init(maxBytes: Int, maxDepth: Int) {
+      self.init(maxBytes: maxBytes, maxDepth: maxDepth, maxValues: 4_096 + maxBytes / 32)
     }
   }
 
   package static func parse(_ bytes: [UInt8], limits: Limits) throws(JSONParseError) -> JSON {
     guard bytes.count <= limits.maxBytes else { throw .tooLarge }
     let input = bytes.span
-    var cursor = Cursor(maxDepth: limits.maxDepth)
+    var cursor = Cursor(maxDepth: limits.maxDepth, maxValues: limits.maxValues)
     cursor.skipWhitespace(in: input)
     let value = try cursor.value(in: input, depth: 0)
     cursor.skipWhitespace(in: input)
@@ -124,9 +133,19 @@ package enum JSONParser {
   /// Keeps only the position; every call borrows the input from `parse`.
   private struct Cursor {
     let maxDepth: Int
+    let maxValues: Int
     var index = 0
+    var values = 0
 
-    init(maxDepth: Int) { self.maxDepth = maxDepth }
+    init(maxDepth: Int, maxValues: Int) {
+      self.maxDepth = maxDepth
+      self.maxValues = maxValues
+    }
+
+    mutating func count() throws(JSONParseError) {
+      values += 1
+      guard values <= maxValues else { throw .tooManyValues }
+    }
 
     mutating func skipWhitespace(in bytes: Span<UInt8>) {
       while index < bytes.count {
@@ -150,6 +169,7 @@ package enum JSONParser {
     }
 
     mutating func value(in bytes: Span<UInt8>, depth: Int) throws(JSONParseError) -> JSON {
+      try count()
       switch try peek(in: bytes) {
       case UInt8(ascii: "{"): return try object(in: bytes, depth: depth + 1)
       case UInt8(ascii: "["): return try array(in: bytes, depth: depth + 1)
@@ -182,6 +202,7 @@ package enum JSONParser {
         guard try peek(in: bytes) == UInt8(ascii: "\"") else { throw .syntax }
         let key = try string(in: bytes)
         guard seen.insert(key).inserted else { throw .duplicateKey }
+        try count()
         skipWhitespace(in: bytes)
         guard try peek(in: bytes) == UInt8(ascii: ":") else { throw .syntax }
         index += 1

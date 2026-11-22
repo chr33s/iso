@@ -156,3 +156,108 @@ private func events(_ text: String) throws -> [SSEEvent] {
   #expect(
     try responses.consume(SSEEvent(name: nil, data: Array(#"{"type":"debug.trace"}"#.utf8))) == nil)
 }
+
+/// The guest sees a fixed gateway error in the protocol's shape, never the
+/// backend's error text.
+@Test(arguments: [
+  (FrontendAPI.openAIChat, #"{"error":{"message":"SECRET-BACKEND-TEXT"}}"#),
+  (.openAIResponses, #"{"type":"error","code":"x","message":"SECRET-BACKEND-TEXT"}"#),
+  (
+    .openAIResponses,
+    #"{"type":"response.failed","response":{"error":{"message":"SECRET-BACKEND-TEXT"}}}"#
+  ),
+  (.anthropicMessages, #"{"type":"error","error":{"type":"x","message":"SECRET-BACKEND-TEXT"}}"#),
+])
+func backendStreamErrorsAreSanitized(_ api: FrontendAPI, _ data: String) throws {
+  var translator = StreamTranslator(api: api, alias: "a", maxEventBytes: 1 << 20)
+  let relayed = try #require(try translator.consume(SSEEvent(name: nil, data: Array(data.utf8))))
+  let text = String(decoding: relayed, as: UTF8.self)
+  #expect(translator.outcome == .failed)
+  #expect(!text.contains("SECRET-BACKEND-TEXT"))
+  #expect(text.contains("INFERENCE_UPSTREAM_INVALID") || text.contains("backend reported an error"))
+}
+
+/// A Responses event name is the backend's `type`; one that could break
+/// the SSE framing fails the stream.
+@Test(arguments: ["response.x\nevent: forged", "response.x\r", "response.x y", "response.ÿ"])
+func responsesEventNamesCannotForgeEvents(_ type: String) {
+  var translator = StreamTranslator(api: .openAIResponses, alias: "a", maxEventBytes: 1 << 20)
+  let data = JSON.object(JSONObject(["type": .string(type)])).serialized
+  #expect(throws: InferenceError.self) { try translator.consume(SSEEvent(name: nil, data: data)) }
+}
+
+@Test(arguments: [
+  #"{"choices":[],"usage":{"prompt_tokens":-1,"completion_tokens":1}}"#,
+  #"{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":-5}}"#,
+  #"{"choices":[],"usage":{"prompt_tokens":9223372036854775807,"completion_tokens":9223372036854775807}}"#,
+  #"{"choices":[],"usage":{"prompt_tokens":1.5,"completion_tokens":1}}"#,
+  #"{"choices":[],"usage":{"prompt_tokens":"1","completion_tokens":1}}"#,
+])
+func invalidUsageFailsTheStream(_ data: String) {
+  var translator = StreamTranslator(api: .openAIChat, alias: "a", maxEventBytes: 1 << 20)
+  #expect(throws: InferenceError.self) {
+    try translator.consume(SSEEvent(name: nil, data: Array(data.utf8)))
+  }
+}
+
+@Test func usageIsValidatedForEveryProtocol() {
+  let cases: [(FrontendAPI, String)] = [
+    (
+      .anthropicMessages,
+      #"{"type":"message_start","message":{"model":"m","usage":{"input_tokens":-3}}}"#
+    ),
+    (.anthropicMessages, #"{"type":"message_delta","delta":{},"usage":{"output_tokens":-1}}"#),
+    (
+      .openAIResponses,
+      #"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":-1}}}"#
+    ),
+  ]
+  for (api, data) in cases {
+    var translator = StreamTranslator(api: api, alias: "a", maxEventBytes: 1 << 20)
+    #expect(throws: InferenceError.self, "\(data)") {
+      try translator.consume(SSEEvent(name: nil, data: Array(data.utf8)))
+    }
+  }
+}
+
+/// Only content and tool events end the time-to-first-output wait.
+@Test func firstOutputNeedsContent() throws {
+  var anthropic = StreamTranslator(api: .anthropicMessages, alias: "a", maxEventBytes: 1 << 20)
+  for data in [
+    #"{"type":"message_start","message":{"model":"m","usage":{"input_tokens":1}}}"#,
+    #"{"type":"ping"}"#,
+    #"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+  ] {
+    _ = try anthropic.consume(SSEEvent(name: nil, data: Array(data.utf8)))
+  }
+  #expect(!anthropic.sawOutput)
+  _ = try anthropic.consume(
+    SSEEvent(
+      name: nil,
+      data: Array(
+        #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}"#.utf8))
+  )
+  #expect(anthropic.sawOutput)
+
+  var chat = StreamTranslator(api: .openAIChat, alias: "a", maxEventBytes: 1 << 20)
+  _ = try chat.consume(
+    SSEEvent(
+      name: nil,
+      data: Array(#"{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}"#.utf8)))
+  #expect(!chat.sawOutput)
+  _ = try chat.consume(
+    SSEEvent(name: nil, data: Array(#"{"choices":[{"index":0,"delta":{"content":"h"}}]}"#.utf8)))
+  #expect(chat.sawOutput)
+
+  var responses = StreamTranslator(api: .openAIResponses, alias: "a", maxEventBytes: 1 << 20)
+  for data in [
+    #"{"type":"response.created","response":{"model":"m"}}"#,
+    #"{"type":"response.in_progress","response":{"model":"m"}}"#,
+  ] {
+    _ = try responses.consume(SSEEvent(name: nil, data: Array(data.utf8)))
+  }
+  #expect(!responses.sawOutput)
+  _ = try responses.consume(
+    SSEEvent(name: nil, data: Array(#"{"type":"response.output_text.delta","delta":"x"}"#.utf8)))
+  #expect(responses.sawOutput)
+}

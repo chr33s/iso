@@ -109,3 +109,34 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   document["socket"] = .string("../../escape.sock")
   #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(document) }
 }
+
+@Test func policyDigestIgnoresOnlyTheCredential() throws {
+  func withCredential(_ secret: String?, maxActive: Int = 1) -> ServiceGrant {
+    let base = grant(.anthropicMessages)
+    return ServiceGrant(
+      alias: base.alias,
+      backend: BackendPolicy(
+        id: base.backend.id, name: base.backend.name, maxActive: maxActive,
+        profile: base.backend.profile, credential: secret.map(Secret.init)),
+      upstreamModel: base.upstreamModel, apis: base.apis, maxContextTokens: base.maxContextTokens,
+      defaultOutputTokens: base.defaultOutputTokens, maxOutputTokens: base.maxOutputTokens,
+      maxInputBytes: base.maxInputBytes)
+  }
+  let first = registration([withCredential("secret-one")]).policyDigest
+  #expect(first == registration([withCredential("secret-two")]).policyDigest)
+  #expect(first == registration([withCredential(nil)]).policyDigest)
+  #expect(first != registration([withCredential("secret-one", maxActive: 2)]).policyDigest)
+}
+
+@Test func outputCeilingMustFitTheContextWindow() throws {
+  var document = ControlProtocol.encode(.register(registration([grant(.anthropicMessages)])))
+  _ = try ControlProtocol.decodeRequest(document)
+  guard case .array(var grants)? = document["grants"], case .object(var first) = grants[0] else {
+    Issue.record("no grants")
+    return
+  }
+  first["max_context_tokens"] = .int(4_096)
+  grants[0] = .object(first)
+  document["grants"] = .array(grants)
+  #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(document) }
+}
