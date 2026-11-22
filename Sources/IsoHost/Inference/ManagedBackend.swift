@@ -428,7 +428,8 @@ package struct ManagedBackendProvisioner: Sendable {
       throw HostError.posix("Failed to resolve", interpreter)
     }
     let output = try runChecked(
-      interpreter, ["-I", "-c", "import sys; print(sys.prefix); print(sys.base_prefix)"])
+      interpreter,
+      ["-I", "-c", "import sys; sys.stdout.write(sys.prefix + '\\n' + sys.base_prefix + '\\n')"])
     let lines = String(decoding: output, as: UTF8.self).split(separator: "\n").map(String.init)
     guard lines.count == 2, lines.allSatisfy({ $0.hasPrefix("/") }) else {
       throw HostError("\(interpreter) did not report its prefixes")
