@@ -2228,15 +2228,16 @@ fi
 # scripted host backend only through the gateway, over iso's one fixed
 # `ssh -R 127.0.0.1:11788:<session socket>` forward. No runtime relay or guest
 # bridge exists, an unrelated host loopback port stays unreachable, and a
-# revocation closes an open guest stream. Uses the per-user gateway location
-# and stops that gateway at the end, like the inference phase. /usr/bin is
-# first on PATH so the forward is the system ssh the gateway accepts.
+# revocation closes an open guest stream. The forward is /usr/bin/ssh whatever
+# PATH says, holds at most 32 guest connections, and its death revokes the VM
+# until a restart or an attach. Uses the per-user gateway location and stops
+# that gateway at the end, like the inference phase.
 if want brokered-inference; then
     echo ""
     echo "=== Phase: brokered-inference ==="
     kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
     BCFG="$WORK/iso-brokered-inference.jsonc"
-    binf() { PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" "$ISO" --config "$BCFG" "$@" </dev/null; }
+    binf() { "$ISO" --config "$BCFG" "$@" </dev/null; }
     free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
     bguest_code() { binf exec binf -- curl -s -o /dev/null -w '%{http_code}' "$@" 2>/dev/null; }
     port_b="$(free_port)"
@@ -2363,11 +2364,46 @@ while True:
         check "brokered-inference: the old capability no longer works" \
             test "$(bguest_code -H "authorization: Bearer $token" -H 'content-type: application/json' \
                 -d "$body" "$url")" = 401
-        # The forward's death revokes the session at the gateway.
+        # At most 32 guest connections at once through one forward: the
+        # gateway's 16 accepted plus its listen backlog of 16; the rest end.
+        # shellcheck disable=SC2016 # Expand in the guest.
+        held="$(binf exec binf -- bash -c 'fds=()
+for _ in $(seq 64); do exec {fd}<>/dev/tcp/127.0.0.1/11788 || break; fds+=("$fd"); done
+sleep 3
+alive=0
+for fd in "${fds[@]}"; do read -r -t 0.2 -N 1 -u "$fd" _; [ $? -gt 128 ] && alive=$((alive + 1)); done
+echo "$alive"' 2>/dev/null)"
+        check "brokered-inference: one forward holds at most 32 guest connections" \
+            test -n "$held" -a "${held:-99}" -le 32
+        # shellcheck disable=SC2016 # Expand in the guest.
+        token="$(binf exec binf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        check "brokered-inference: and still serves once they close" \
+            grep -q '"model":"local-claude"' <<<"$(binf exec binf -- curl -s -H "authorization: Bearer $token" \
+                -H 'content-type: application/json' -d "$body" "$url" 2>/dev/null)"
+        # The forward's death revokes the session at the gateway, and the VM
+        # stays revoked until a restart or an attach: no new forward.
         kill "$next_pid" 2>/dev/null
         sleep 2
         check "brokered-inference: the forward's exit revokes its session" \
-            test "$(PATH="/usr/bin:$PATH" "$ISO" --config "$BCFG" inference status binf --json </dev/null | jq -r '[.sessions[] | select(.state == "active")] | length')" = 0
+            test "$(binf inference status binf --json | jq -r '[.sessions[] | select(.state == "active")] | length')" = 0
+        dead_out="$(binf exec binf -- echo ok 2>"$WORK/binf-forward-dead.err")"
+        check "brokered-inference: a shell still runs after the forward died" test "$dead_out" = ok
+        check "brokered-inference: and is told to restart the VM or attach" \
+            grep -q "inference forward of 'binf' exited.*iso stop binf.*iso inference attach binf" "$WORK/binf-forward-dead.err"
+        check "brokered-inference: the VM is recorded as revoked by the forward's exit" \
+            grep -qx forward-exited "$CSTATE/instances/binf/inference-revoked"
+        binf exec binf -- true >/dev/null 2>&1
+        check "brokered-inference: no command registers a new session" \
+            test "$(binf inference status binf --json | jq -r '.sessions | length')" = 0
+        check "brokered-inference: nor starts a new forward" \
+            test "$(bguest_code -H 'content-type: application/json' -d "$body" "$url")" = 000
+        check "brokered-inference: iso inference attach grants inference again" \
+            binf inference attach binf --service local-claude --api anthropic-messages
+        state="$(binf inference status binf --json)"
+        check "brokered-inference: over a fresh forward session" \
+            test "$(jq -r '[.sessions[] | select(.state == "active" and .transport_kind == "forward")] | length' <<<"$state")" = 1 \
+            -a "$(jq -r '.sessions[0].transport_pid' <<<"$state")" != "$next_pid"
+        binf inference detach binf >/dev/null 2>&1
         check "brokered-inference: iso stop succeeds again" binf stop binf
         binf destroy binf >/dev/null 2>&1
     else
