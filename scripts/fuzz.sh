@@ -24,7 +24,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/fuzz/.build"
 TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad GuestJSON CodexTOML
   EgressConnect EgressHead ProxyRequestTarget ProxyHeaders ProxyCapability
-  InferenceRequest InferenceStream InferenceControl)
+  InferenceRequest InferenceStream InferenceControl InferenceHeaders)
 # The self-contained IsoHost parsers, compiled as a partial `IsoHost` module:
 # the full target needs IsoSecrets (swift-crypto), which this build does not compile.
 HOST_PARSER_SOURCES=(

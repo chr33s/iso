@@ -1,0 +1,3 @@
+POST /v1/responses
+origin: https://example.com
+content-type: application/json

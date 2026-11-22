@@ -1,0 +1,21 @@
+POST /v1/messages?beta=true
+Accept: application/json
+Content-Type: application/json
+User-Agent: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-Claude-Code-Session-Id: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-Stainless-Arch: arm64
+X-Stainless-Lang: js
+X-Stainless-OS: MacOS
+X-Stainless-Package-Version: 0.127.0
+X-Stainless-Retry-Count: 0
+X-Stainless-Runtime: node
+X-Stainless-Runtime-Version: v26.3.0
+X-Stainless-Timeout: 600
+anthropic-beta: claude-code-20250219,interleaved-thinkin
+anthropic-dangerous-direct-browser-access: true
+anthropic-version: 2023-06-01
+x-app: cli
+Connection: keep-alive
+Host: 127.0.0.1:18731
+Accept-Encoding: gzip, deflate, br, zstd
+Content-Length: 0
