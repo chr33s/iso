@@ -109,6 +109,14 @@ import Testing
     #expect(socket.path.utf8.count < 104)
   }
 
+  /// The vector the host's IsolationGate tests pin too: both sides derive the same name.
+  @Test func theSharedRelayHashVector() throws {
+    #expect(
+      SandboxPaths.stableHash("/Users/iso-test/.iso/runtime/sandboxes/dev") == "86985f2479f18d00")
+    let paths = try SandboxRoot("/Users/iso-test/.iso/runtime").sandbox(try SandboxID("dev"))
+    #expect(paths.inferenceSocket.lastPathComponent == "86985f2479f18d00.sock")
+  }
+
   // MARK: machine configuration and report
 
   @Test func theOwnerConfiguresAndReportsExactlyTheInferenceRelay() throws {
