@@ -531,16 +531,29 @@ func randomHex(_ bytes: Int) -> String {
 
 /// Binds one session's Unix socket in the relay directory and keeps it for
 /// the session's lifetime (§22). The instance's sandbox owner relays guest
-/// connections to it over vsock; nothing listens on TCP.
-enum SessionListener {
+/// connections to it over vsock, or iso's `ssh` reverse forward connects
+/// them (§22.9); nothing listens on TCP.
+package enum SessionListener {
+  /// The session socket's listen backlog. Connections over the session's
+  /// 16 are closed unread, so at most 16 are accepted at once.
+  /// - owner: the runtime relays up to 32 guest connections per session
+  ///   (§22.3, R2); a smaller backlog would refuse simultaneous dials the
+  ///   relay still counts.
+  /// - forward: nothing else caps the host `ssh`, so the backlog is what
+  ///   keeps 16 accepted plus those pending within 32 (§22.9). A dial over
+  ///   it is refused, and `ssh` closes that guest channel.
+  package static func backlog(_ kind: TransportKind) -> Int32 {
+    switch kind {
+    case .owner: Int32(SessionLimits.relayedConnections)
+    case .forward: Int32(SessionLimits.forwardedConnections - SessionLimits.connections)
+    }
+  }
+
   static func bind(gateway: Gateway, session: GatewaySession, path: String, group: EventLoopGroup)
     -> EventLoopFuture<Channel>
   {
     ServerBootstrap(group: group)
-      // The runtime relays up to 32 guest connections per session (§22.3,
-      // R2); a smaller backlog would refuse simultaneous dials the relay
-      // still counts. Connections over the session's 16 are closed unread.
-      .serverChannelOption(ChannelOptions.backlog, value: Int32(SessionLimits.relayedConnections))
+      .serverChannelOption(ChannelOptions.backlog, value: backlog(session.transportKind))
       .childChannelOption(ChannelOptions.autoRead, value: true)
       .childChannelOption(
         ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16 * 1024)

@@ -136,6 +136,14 @@ INFERENCE_MUTATIONS = [
     ("inference forward session outlives its owner", "IsoInferenceGateway/Gateway.swift",
      "    let watched = session.transportKind == .owner ? [binding] : [binding, owner]",
      "    let watched = [binding]"),
+    # A forward session's socket holds at most 32 guest connections (§22.9):
+    # its 16 accepted and a listen backlog of 16.
+    ("inference forward backlog unbounded", "IsoInferenceGateway/Gateway.swift",
+     "    case .forward: Int32(SessionLimits.forwardedConnections - SessionLimits.connections)",
+     "    case .forward: Int32(SessionLimits.relayedConnections)"),
+    ("inference forward listener uses the relay backlog", "IsoInferenceGateway/Gateway.swift",
+     ".serverChannelOption(ChannelOptions.backlog, value: backlog(session.transportKind))",
+     ".serverChannelOption(ChannelOptions.backlog, value: backlog(.owner))"),
     ("inference transport kind not decoded", "IsoInferenceCore/ControlProtocol.swift",
      'transport: try r.enumeration("transport", TransportKind.self)', "transport: .owner"),
     ("inference control version 2 accepted", "IsoInferenceCore/ControlProtocol.swift",

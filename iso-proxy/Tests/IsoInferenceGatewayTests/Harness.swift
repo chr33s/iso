@@ -170,6 +170,30 @@ struct RawResponse {
 
 enum RawClient {
   /// A session socket, as the sandbox owner's relay connects to it.
+  /// A non-blocking dial: the connected descriptor, or nil when the
+  /// listener refuses it (its backlog is full).
+  static func connectNow(_ path: String) -> Int32? {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &address.sun_path) { raw in
+      let bytes = Array(path.utf8)
+      raw.copyBytes(from: bytes)
+      raw[bytes.count] = 0
+    }
+    let result = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+      }
+    }
+    guard result == 0 else {
+      close(fd)
+      return nil
+    }
+    return fd
+  }
+
   static func connect(_ path: String) -> Int32 {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     var address = sockaddr_un()

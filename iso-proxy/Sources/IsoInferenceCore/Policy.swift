@@ -139,6 +139,11 @@ package enum SessionLimits {
   package static let sharedConnections = 128
   /// Guest connections the sandbox runtime relays to one session at once.
   package static let relayedConnections = 32
+  /// Guest connections one brokered forward session may hold at once,
+  /// accepted or pending (§22.9), the relay's cap: the session's own
+  /// `connections` accepted, and a listen backlog of the rest. Neither the
+  /// host `ssh` nor the gateway holds more for one forward.
+  package static let forwardedConnections = 32
   package static let headerBytes = 32 * 1024
   package static let headerFields = 64
   package static let jsonDepth = 32

@@ -243,6 +243,42 @@ extension GatewayTests {
     #expect(backend.requests.isEmpty)
   }
 
+  /// A session socket holds its 16 accepted connections plus its listen
+  /// backlog. A forward session's backlog keeps that within 32 (§22.9), so
+  /// the guest cannot make the host `ssh` or the gateway hold more for one
+  /// forward; the vmnet relay's keeps room for the 32 it relays (R2).
+  @Test(arguments: [TransportKind.forward, .owner])
+  func sessionSocketsBoundTheirAcceptedAndPendingConnections(_ kind: TransportKind) throws {
+    let backend = try FakeBackend(.stream(chatEvents))
+    let harness = try Harness()
+    let session = try harness.session([grant(.openAIChat, port: backend.port)], transport: kind)
+    let idle = (0..<SessionLimits.connections).map { _ in RawClient.connect(session.socket) }
+    defer { for fd in idle { close(fd) } }
+    let own = try #require(harness.gatewaySession(session.id)).connections
+    #expect(eventually { own.available == 0 })
+    // Hold every event loop, so nothing more is accepted: what still
+    // connects waits in the listen backlog, and the next dial is refused.
+    let release = DispatchSemaphore(value: 0)
+    var loops = 0
+    for loop in harness.group.makeIterator() {
+      loops += 1
+      loop.execute { release.wait() }
+    }
+    var pending: [Int32] = []
+    defer { for fd in pending { close(fd) } }
+    while pending.count <= 64, let fd = RawClient.connectNow(session.socket) { pending.append(fd) }
+    for _ in 0..<loops { release.signal() }
+    let held = SessionLimits.connections + pending.count
+    switch kind {
+    case .forward:
+      #expect(held == SessionLimits.forwardedConnections, "\(pending.count) pending")
+      #expect(SessionListener.backlog(.forward) == 16)
+    case .owner:
+      #expect(pending.count == SessionLimits.relayedConnections, "\(pending.count) pending")
+    }
+    #expect(backend.requests.isEmpty)
+  }
+
   @Test func repeatedAuthenticationFailuresCloseNewConnections() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
