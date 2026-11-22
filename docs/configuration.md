@@ -724,7 +724,8 @@ anything listening on the host's addresses (see the
 [trust model](trust-model.md#apple-sandbox-backend)).
 
 `"filtered"` uses the same host-only network as `"none"` and starts
-`iso-egress` beside the `iso` binary. It requires iso-sandbox protocol 5.
+`iso-egress` beside the `iso` binary. It requires the current iso-sandbox
+protocol (6; the boot identity it binds to dates from protocol 5).
 A host lease renews the companion once a second only while the runtime's
 live `bootId` still matches the boot that started it, the owner lock is
 held, and the session deadline has not passed. A leftover `live.json` does
@@ -765,7 +766,7 @@ port, and allows only the `/private/var/run/mDNSResponder` UNIX socket. Before
 it reads stdin, the companion probes that writes, exec, a random port, loopback
 ports 443 and 53 and a read of the user's home are denied and that port 443 to
 a TEST-NET address is not; it refuses to start otherwise. Existing session
-handoff checks require protocol 5, compare the runtime's boot identity and
+handoff checks require the current protocol, compare the runtime's boot identity and
 owner PID with bounded live state, and compare the frozen policy hash with the atomic host record
 `egress-boot-policy.json`. Network policy records must have canonical hosts
 and a matching computed hash. Older filtered sessions with only

@@ -215,6 +215,13 @@ extension AppleBackend {
         "Codex ChatGPT account auth (`\"codex\": {\"auth\": \"chatgpt\"}`) needs the Linux Secret Service; macOS guests do not support it"
       )
     }
+    // The gateway reaches a guest only through the Linux runtime's vsock
+    // socket relay; a macOS guest would have no guarded path (§22).
+    guard config.inference.mode != .required else {
+      throw HostError(
+        "inference.mode = \"required\" is supported for Linux guests only: guarded inference reaches the guest through the Linux sandbox runtime's socket relay, which macOS guests do not have"
+      )
+    }
   }
 
   // MARK: Start

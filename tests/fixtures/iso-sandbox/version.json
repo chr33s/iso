@@ -6,6 +6,6 @@
     "linux-display"
   ],
   "name" : "iso-sandbox",
-  "protocol" : 5,
+  "protocol" : 6,
   "version" : "0.1.0"
 }

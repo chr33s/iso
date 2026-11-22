@@ -235,7 +235,7 @@ package struct SandboxRuntime: Sendable {
   }
 
   /// Accept the current protocol with the containerization release this host was
-  /// validated with. Filtered egress checks protocol 5 separately.
+  /// validated with. Filtered egress checks the protocol again separately.
   package static func qualify(_ version: RuntimeVersion) throws(RuntimeError) -> String {
     let identity =
       "\(version.name) \(version.version) (containerization \(version.containerization), protocol \(version.protocol))"
@@ -315,7 +315,7 @@ package struct SandboxRuntime: Sendable {
       let live, let bootID
     else {
       throw .unqualified(
-        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity) and a live boot id for \(name); this runtime is protocol \(advertisedProtocol)"
+        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.version) and a live boot id for \(name); this runtime is protocol \(advertisedProtocol)"
       )
     }
     return FilteredBoot(

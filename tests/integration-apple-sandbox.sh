@@ -312,8 +312,8 @@ else
     fail "iso-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 5 on containerization 0.54.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "5 0.54.0"
+check "version reports protocol 6 on containerization 0.54.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "6 0.54.0"
 # The runtime keys its init filesystem by containerization release.
 INITFS="initfs-0.54.0.ext4"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&

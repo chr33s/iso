@@ -170,7 +170,20 @@ func gateRejectsEachExposureNetworkAndIdentityChange(_ label: String) throws {
     encoding: .utf8)
   let package = try String(
     contentsOf: root.appending(path: "iso-sandbox/Package.swift"), encoding: .utf8)
-  #expect(layout.contains("package let protocolVersion = \(RuntimeProtocol.version)\n"))
+  // MERGE: the runtime's protocol 6 (the inference relay) lands with the
+  // iso-sandbox half of this change. Until its sources record `inferenceRelay`
+  // they still say 5; from then on the pins must match exactly. Remove this
+  // allowance once both halves are merged.
+  let runtimeRelays = try FileManager.default.subpathsOfDirectory(
+    atPath: root.appending(path: "iso-sandbox/Sources/IsoSandboxCore").path
+  ).contains { file in
+    file.hasSuffix(".swift")
+      && (try? String(
+        contentsOf: root.appending(path: "iso-sandbox/Sources/IsoSandboxCore/\(file)"),
+        encoding: .utf8))?.contains("inferenceRelay") == true
+  }
+  let runtimeProtocol = runtimeRelays ? RuntimeProtocol.version : RuntimeProtocol.version - 1
+  #expect(layout.contains("package let protocolVersion = \(runtimeProtocol)\n"))
   #expect(
     layout.contains(
       "package let containerizationVersion = \"\(SandboxRuntime.containerization)\"\n")
@@ -259,4 +272,77 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
   var object = try running()
   setPath(&object, ["record", "expiresAt"], "soon")
   #expect(throws: RuntimeError.self) { try gate(try bytes(object)) }
+}
+
+// MARK: - inference relay (secure-local-inference §22)
+
+private func relayGate(_ object: [String: Any], relay: Bool) throws -> ErrorClass? {
+  let base = expected()
+  let data = try bytes(object)
+  do {
+    let ready = try IsolationGate.verifyEffective(
+      RuntimeProtocol.parseInspect(data, expected: gateSandbox),
+      .init(
+        sandbox: base.sandbox, owner: base.owner, runtimeRoot: base.runtimeRoot,
+        resources: base.resources, egress: base.egress, inferenceRelay: relay))
+    #expect(ready.inferenceSocket == (relay ? relayedSocket : nil))
+    return nil
+  } catch {
+    return classify(error)
+  }
+}
+
+private let relayedSocket = IsolationGate.inferenceSocket(
+  runtimeRoot: gateRoot, sandbox: gateSandbox)
+
+private func withRelay(
+  _ object: [String: Any], host: String = relayedSocket,
+  guest: String = "/var/lib/iso-inference/gateway.sock", cap: Int? = 32, relays: Int = 1,
+  record: Bool = true
+) -> [String: Any] {
+  var copy = object
+  if record { setPath(&copy, ["record", "inferenceRelay"], true) }
+  setPath(&copy, ["effective", "socketRelays"], relays)
+  var relay: [String: Any] = ["host": host, "guest": guest]
+  if let cap { relay["maxConnections"] = cap }
+  setPath(&copy, ["effective", "inferenceRelay"], relay)
+  return copy
+}
+
+@Test func onlyTheDerivedInferenceRelayPassesAndOnlyWhenRequired() throws {
+  let base = try running()
+  #expect(
+    IsolationGate.inferenceSocket(runtimeRoot: gateRoot, sandbox: gateSandbox)
+      .hasPrefix(IsolationGate.relayDirectory + "/"))
+  #expect(try relayGate(withRelay(base), relay: true) == nil)
+  #expect(try relayGate(base, relay: false) == nil)
+  // A required relay that is missing, or a relay nobody asked for.
+  #expect(try relayGate(base, relay: true) == .hostExposure)
+  #expect(try relayGate(withRelay(base), relay: false) == .hostExposure)
+  // Any other host socket, guest path, cap or relay count, or a record
+  // without the relay.
+  for bad in [
+    withRelay(base, host: "/tmp/other.sock"),
+    withRelay(base, host: IsolationGate.relayDirectory + "/0.sock"),
+    withRelay(
+      base,
+      host: IsolationGate.inferenceSocket(
+        runtimeRoot: gateRoot, sandbox: try MachineName("iso-0a1b2c3d-0011223344556600"))),
+    withRelay(base, guest: "/run/iso-inference.sock"), withRelay(base, cap: nil),
+    withRelay(base, cap: 1000), withRelay(base, relays: 2),
+    withRelay(base, record: false),
+  ] {
+    #expect(try relayGate(bad, relay: true) == .hostExposure)
+  }
+}
+
+/// The FNV-1a-64 relay name shared with iso-sandbox (contract vector).
+@Test func relaySocketNameMatchesTheRuntimeDerivation() throws {
+  #expect(
+    IsolationGate.relaySocketName(sandboxDirectory: "/Users/iso-test/.iso/runtime/sandboxes/dev")
+      == "86985f2479f18d00.sock")
+  #expect(
+    IsolationGate.inferenceSocket(
+      runtimeRoot: "/Users/iso-test/.iso/runtime/", sandbox: try MachineName("dev"))
+      == IsolationGate.relayDirectory + "/86985f2479f18d00.sock")
 }

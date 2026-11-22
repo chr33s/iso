@@ -144,7 +144,7 @@ import Testing
 private func handoffFailure(
   filtered: Bool = true, recordedBootID: String? = "boot", liveBootID: String? = "boot",
   ownerLockHeld: Bool = true, companionAlive: Bool = true, tunnelAlive: Bool = true,
-  advertisedProtocol: UInt32 = 5, recordedPolicyHash: String? = "hash",
+  advertisedProtocol: UInt32 = 6, recordedPolicyHash: String? = "hash",
   wantedPolicyHash: String = "hash", ownerMatches: Bool = true
 ) -> FilteredHandoff.Failure? {
   FilteredHandoff.prove(
@@ -166,7 +166,7 @@ private func handoffFailure(
 
 @Test func filteredHandoffBindsProtocolPolicyAndOwner() {
   #expect(handoffFailure() == nil)
-  for version: UInt32 in [0, 4, 6] {
+  for version: UInt32 in [0, 4, 5, 7] {
     #expect(handoffFailure(advertisedProtocol: version) == .runtimeIncompatible)
   }
   #expect(handoffFailure(recordedPolicyHash: nil) == .policyChanged)

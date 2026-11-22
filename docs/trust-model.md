@@ -795,7 +795,11 @@ exposure, and isolate verifies the effective configuration anyway
   [Linux guests with a display](#linux-guests-with-a-display)), and at most the one
   virtio-fs device `apple/containerization` always attaches, sharing no host
   directory (`VMDevices.requireExpected`). The runtime's `SandboxRecord` has no field for a host
-  mount, socket relay, published port, or agent forwarding, and its VM
+  mount, published port, or agent forwarding. Its one socket-relay field,
+  `inferenceRelay` (protocol 6), is a boolean that relays only the
+  instance's own inference socket into one fixed guest path (see
+  [guarded local inference](#guarded-local-inference)); the record holds no
+  path. Its VM
   configuration is built in one function (`Owner.machineConfiguration`) with
   kernel pseudo-filesystems only. Its one network field, `network`, can only
   narrow reach: absent means vmnet shared (NAT) mode, `host_only` (from
@@ -832,8 +836,8 @@ exposure, and isolate verifies the effective configuration anyway
   guest can wedge, so if the guest is still running ten seconds after the
   forced kill the owner exits, which ends the in-process VM.
 - **Runtime qualification.** `SandboxRuntime` qualification accepts `iso-sandbox`
-  protocol 5 with `containerization` 0.54.0. Filtered egress requires
-  protocol 5 and a live `bootId`. The runtime itself accepts
+  protocol 6 with `containerization` 0.54.0. Filtered egress requires that
+  protocol (which keeps protocol 5's boot identity) and a live `bootId`. The runtime itself accepts
   only a kernel whose sha256 is in `KernelPin.allowed`. On first `iso setup`,
   `iso-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.54.0`
   (the runtime's only outbound fetch) and refuses it unless it resolves to the
@@ -847,7 +851,13 @@ exposure, and isolate verifies the effective configuration anyway
   - a root disk at exactly `<runtime root>/sandboxes/<id>/rootfs.ext4`;
   - only the seven kernel pseudo-filesystem mounts, each from its fixed source
     and destination;
-  - zero socket relays and published ports, and no agent forwarding;
+  - zero published ports and no agent forwarding, and zero socket relays,
+    except under `inference.mode: "required"` exactly one: the inference relay
+    from `<per-user temp>/iso-sbx/inference/<FNV-1a-64 of the sandbox
+    directory>.sock` into `/var/lib/iso-inference/gateway.sock`, capped at 32
+    connections, on a boot whose record says `inferenceRelay`. A boot whose
+    relay does not match the configuration (the mode changed while it ran) is
+    refused with a restart hint;
   - exactly one interface on a per-sandbox vmnet subnet, carrying the reported
     address (for a brokered sandbox: no interface or address, and the checks in
     [Brokered transport](#brokered-transport));
