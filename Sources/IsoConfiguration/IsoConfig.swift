@@ -108,6 +108,10 @@ package struct IsoConfig: Sendable, Equatable {
   /// `coreai`: paravirtualized Core AI accelerators for macOS guests; nil
   /// when off (docs/design/paravirtualized-coreai.md).
   package let coreAI: CoreAIConfig?
+  /// `inference` (docs/design/secure-local-inference-spec.md): guarded
+  /// local models through the host `iso-inference` gateway; `.off` when
+  /// absent.
+  package let inference: InferenceConfig
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -119,8 +123,9 @@ package struct IsoConfig: Sendable, Equatable {
     editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?,
     network: NetworkConfig = .defaults, workspaceInput: WorkspaceInputConfig = .defaults,
     revokedGrantIDs: [String] = [], computerUse: ComputerUseConfig = .off,
-    coreAI: CoreAIConfig? = nil
+    coreAI: CoreAIConfig? = nil, inference: InferenceConfig = .off
   ) {
+    self.inference = inference
     self.computerUse = computerUse
     self.coreAI = coreAI
     self.revokedGrantIDs = revokedGrantIDs
@@ -248,7 +253,31 @@ package struct AgentConfig: Sendable, Equatable {
   package let plugins: [String]
   package let mcpServers: [String: MCPServer]
   package let configDirectory: ConfigDirectory
-  package let localModel: LocalModel?
+  package let localSelection: LocalModelSelection?
+
+  package init(
+    apiKey: Secret<String>?, envForward: [EnvVarName], marketplaces: [String], plugins: [String],
+    mcpServers: [String: MCPServer], configDirectory: ConfigDirectory,
+    localSelection: LocalModelSelection?
+  ) {
+    self.apiKey = apiKey
+    self.envForward = envForward
+    self.marketplaces = marketplaces
+    self.plugins = plugins
+    self.mcpServers = mcpServers
+    self.configDirectory = configDirectory
+    self.localSelection = localSelection
+  }
+
+  /// The legacy raw endpoint, when that form is configured.
+  package var localModel: LocalModel? {
+    if case .endpoint(let model)? = localSelection { model } else { nil }
+  }
+
+  /// The guarded inference service, when that form is configured.
+  package var localService: InferenceServiceName? {
+    if case .service(let name)? = localSelection { name } else { nil }
+  }
 }
 
 package enum CodexAuthMode: String, Sendable, Equatable {
@@ -608,7 +637,7 @@ extension IsoConfig {
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
       editor: editor, execution: execution, policy: policy, network: network,
       workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs, computerUse: computerUse,
-      coreAI: coreAI)
+      coreAI: coreAI, inference: inference)
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -641,7 +670,7 @@ extension IsoConfig {
       AgentConfig(
         apiKey: a.apiKey, envForward: a.envForward, marketplaces: a.marketplaces,
         plugins: a.plugins, mcpServers: keep(a.mcpServers), configDirectory: a.configDirectory,
-        localModel: a.localModel)
+        localSelection: a.localSelection)
     }
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
@@ -651,7 +680,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse, coreAI: coreAI)
+      computerUse: computerUse, coreAI: coreAI, inference: inference)
   }
 
   /// Both agents with one more MCP server. Does not rewrite the config file.
@@ -662,7 +691,7 @@ extension IsoConfig {
       return AgentConfig(
         apiKey: a.apiKey, envForward: a.envForward, marketplaces: a.marketplaces,
         plugins: a.plugins, mcpServers: servers, configDirectory: a.configDirectory,
-        localModel: a.localModel)
+        localSelection: a.localSelection)
     }
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
@@ -672,7 +701,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse, coreAI: coreAI)
+      computerUse: computerUse, coreAI: coreAI, inference: inference)
   }
 
   /// This command's `proxy.mode` override. Does not rewrite the config file.
@@ -686,7 +715,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse, coreAI: coreAI)
+      computerUse: computerUse, coreAI: coreAI, inference: inference)
   }
 
   /// The configuration under an instance's recorded transport.
@@ -699,7 +728,8 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: NetworkConfig(transport: transport), workspaceInput: workspaceInput,
-      revokedGrantIDs: revokedGrantIDs, computerUse: computerUse, coreAI: coreAI)
+      revokedGrantIDs: revokedGrantIDs, computerUse: computerUse, coreAI: coreAI,
+      inference: inference)
   }
 
   /// Why `egress` cannot run over `network.transport`, or nil. Brokered has
@@ -721,7 +751,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse, coreAI: coreAI)
+      computerUse: computerUse, coreAI: coreAI, inference: inference)
   }
 }
 

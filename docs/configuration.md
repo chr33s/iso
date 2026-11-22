@@ -15,7 +15,7 @@ isolate reads configuration from `~/.iso/config.jsonc` by default. Pass `--confi
 
 If the implicit default configuration is absent, isolate uses built-in defaults. An explicit `--config` path must exist; a missing selected file is an error. A valid minimal config is an empty object, `{}`. `iso setup --config-only` writes a commented template (the same content as [`config.example.jsonc`](../config.example.jsonc)).
 
-Commands that edit the configuration (`iso proxy setup`, `iso github setup-pat` and related PAT commands) rewrite the file as formatted strict JSON: comments and formatting are not preserved, but unrelated keys are.
+Commands that edit the configuration (`iso proxy setup`, `iso github setup-pat` and related PAT commands, `iso inference init`) rewrite the file as formatted strict JSON: comments and formatting are not preserved, but unrelated keys are.
 
 A leading `~` is expanded to the home directory in path-valued fields (`data_dir`, `claude.config_dir`, `codex.config_dir`, the `apple_container` paths, and the `claude.marketplaces` / `codex.marketplaces` / `profiles.<name>.marketplaces` lists). The shell does not expand `~` inside config-file values, so isolate does it when loading the file.
 
@@ -40,6 +40,7 @@ after hand edits.
 | `coreai` | object | unset (off) | Experimental, macOS guests only: paravirtualized Core AI accelerators. Weakens the host. See [coreai](#coreai). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
+| `inference` | object | unset (`"mode": "off"`) | Guarded host-side local models through the `iso-inference` gateway; Linux guests only. See [`inference`](#inference-section). |
 | `network` | object | `{"transport": "brokered"}` | How new instances' VMs are connected: `"brokered"` (no network device) or `"vmnet"` (an explicit compatibility choice; required for macOS guests and open egress). See [network](#network). |
 | `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
@@ -282,7 +283,7 @@ Claude Code configuration injected into the guest VM at start time. Every field 
 | `marketplaces` | array of strings | `[]` | Plugin marketplace sources. Each entry is a GitHub repo URL or an absolute local directory path. Local directories are copied into the guest before registration. |
 | `plugins` | array of strings | `[]` | Plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
 | `mcp_servers` | object | `{}` | MCP servers to register in the guest. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
-| `local_model` | object | unset | Host-side model endpoint to route Claude Code at when the VM is in local mode (`iso model set local <vm>`). See [Local-model routing](#local-model-routing). |
+| `local_model` | object | unset | Host-side model endpoint to route Claude Code at when the VM is in local mode (`iso model set local <vm>`), or `{"service": NAME}`, a guarded [`inference`](#inference-section) service. See [Local-model routing](#local-model-routing). |
 
 ### MCP servers
 
@@ -362,7 +363,7 @@ Codex configuration injected into the guest VM at start time. Every field is opt
 | `marketplaces` | array of strings | `[]` | Codex plugin marketplace sources. Each entry is a `owner/repo`[`@ref`] shorthand, a git URL, or an absolute local directory path. Local directories are copied into the guest before registration. Installed on first boot (not baked into the image). |
 | `plugins` | array of strings | `[]` | Codex plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
 | `mcp_servers` | object | `{}` | MCP servers to merge into the guest `~/.codex/config.toml`. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
-| `local_model` | object | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`iso model set local <vm>`). See [Local-model routing](#local-model-routing). |
+| `local_model` | object | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`iso model set local <vm>`), or `{"service": NAME}`, a guarded [`inference`](#inference-section) service. See [Local-model routing](#local-model-routing). |
 
 isolate preserves any other settings already present in the staged `config.toml`, but the `mcp_servers` table is owned by isolate when `codex.mcp_servers` is configured. With `auth` `"chatgpt"`, isolate also writes `cli_auth_credentials_store = "keyring"` so Codex caches account credentials in the guest OS credential store instead of `auth.json`.
 
@@ -400,10 +401,171 @@ Each object takes the same fields:
 ```
 
 An endpoint set here takes precedence over one entered interactively and saved
-in the instance's `model.json` by `iso model set local …`. See the local-model
+in the instance's `model.json` by `iso model set local …`.
+
+These endpoints are **transport, not policy**: the guest reaches the model
+server directly (over the tunnel or the LAN) and can use any route, model or
+option it serves. For a policy boundary use the guarded form,
+`"local_model": { "service": "NAME" }`, with
+[`inference.mode = "required"`](#inference-section). The guarded form accepts
+nothing else, and `required` refuses the endpoint form. See the local-model
 sections of [docs/claude-integration.md](claude-integration.md) and
 [docs/codex-integration.md](codex-integration.md) for how each endpoint is
 materialized into guest config.
+
+## `inference` section
+
+Guarded local inference (the design is
+[docs/design/secure-local-inference-spec.md](design/secure-local-inference-spec.md)).
+With `"mode": "required"`, each running VM gets one session on the host
+`iso-inference` gateway: its own Unix socket on the host
+(`<per-user temp>/iso-sbx/inference/<hash>.sock`), relayed into the VM over
+vsock by the sandbox runtime and bridged to `127.0.0.1:11788` in the guest, and
+a fresh per-session capability. The gateway accepts only the granted API
+routes and a closed set of request fields for each API. It rebuilds each
+request for a fixed backend and model, clamps output limits, and enforces
+shared budgets. It never forwards the guest's headers, credentials or unknown
+fields.
+
+Under `required`:
+
+- no provider credential reaches the guest (declaring one is an error), no
+  credential proxy starts whatever `proxy.mode` says, and no raw `local_model`
+  tunnel is created;
+- an agent without a guarded service cannot be launched (`iso claude` /
+  `iso codex` fail instead of using the cloud), and `iso model set remote` and
+  `--model-mode remote` are refused;
+- `codex.auth = "chatgpt"` is refused;
+- a gateway, backend or verification failure fails the agent launch. There is
+  no fallback to a raw endpoint or the cloud. Shells and commands keep working
+  without inference: `iso shell` and `iso exec` warn and open the session
+  without inference variables when no session can be established;
+- the instance must be a Linux guest. The relay is a Linux-guest runtime
+  feature, so a macOS guest is refused at `up`/`start` and agent launch;
+- it composes with `egress` and `network.transport`: the relay needs no
+  network device, so it works over both `brokered` and `vmnet`, and a brokered
+  boot's network policy records no provider broker and no local-model tunnel.
+  It does not change egress. Under `"filtered"` the guest keeps its approved
+  CONNECT hosts (agents reach the bridge directly: `127.0.0.1` is in
+  `NO_PROXY`), and under vmnet the guest can still reach services listening on
+  the Mac's other addresses. `security.preset: "offline"` is the recommended
+  pairing.
+
+Changing `inference.mode` for a running instance takes effect at its next
+start: the running boot keeps the relay setting it was started with, and
+handoffs to it are refused until it is stopped and started again. Turning the
+mode off revokes the instance's gateway session first.
+
+```jsonc
+"inference": {
+  "mode": "required",
+  "global_limits": { "max_active_requests": 2 },
+  "qualification_profiles": {
+    "reviewed": {
+      "protocol": "anthropic-messages",
+      "completion_evidence": "drain",
+      "context_overflow": "reject",
+      "input_overhead": { "per_request_bytes": 4096, "per_message_bytes": 64 },
+      "max_input_bytes": "512KiB"
+    }
+  },
+  "backends": {
+    "main": {
+      "base_url": "http://127.0.0.1:8080",
+      "protocol": "anthropic-messages",
+      "qualification_profile": "reviewed"
+    }
+  },
+  "services": {
+    "local-coder": {
+      "backend": "main",
+      "upstream_model": "my-org/coder-model",
+      "frontend_apis": ["anthropic-messages"],
+      "max_context_tokens": 131072
+    }
+  }
+},
+"claude": { "local_model": { "service": "local-coder" } }
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | `"off"` | `"off"` (no gateway; legacy endpoints work as raw transport) or `"required"`. There is no automatic fallback mode. |
+| `global_limits.max_active_requests` | integer | `2` | Generations running at once across every VM and data root (1–64). |
+| `global_limits.max_queued_requests` | integer | `32` | Requests waiting across every VM (0–1024). |
+| `global_limits.max_request_buffer_bytes` | byte count | `"64MiB"` | Memory for request bodies being read or queued (1 MiB–1 GiB). |
+
+A running gateway only tightens its global limits: a registration with smaller
+values lowers them for everyone, and larger values have no effect until it restarts.
+
+**`qualification_profiles.<name>`** records what you verified about a backend
+and model. The gateway enforces it; iso does not verify it.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `protocol` | string | required | `"openai-chat"`, `"openai-responses"` or `"anthropic-messages"`: the protocol the backend itself serves. Only same-protocol adapters exist; no translation between protocols. |
+| `completion_evidence` | string | required | How the backend proves a cancelled request stopped: `"drain"` (read the stream to its end), `"stream-close"` (closing the stream stops generation) or `"none"` (any cancellation quarantines the backend). |
+| `stream_close_drain_ms` | integer | `500` | With `stream-close`, how long a closed request keeps its slot (0–60000). Cover the backend's prefill time for the largest prompt `max_input_bytes` allows: mlx-lm cannot stop during prefill. |
+| `context_overflow` | string | required | What the backend does with an over-long prompt: `"reject"`, `"truncate"` or `"accept"` (processes it past its window; only `max_input_bytes` limits it). Shown in status. |
+| `input_overhead.per_request_bytes`, `.per_message_bytes` | integer | required | Chat-template overhead added to the byte bound on input tokens. |
+| `max_input_bytes` | byte count | required | Upper bound on the (byte-bounded) prompt size. Keep it near the model's context window: at about 4 bytes per token, a 32k-token window is about 128 KiB. |
+| `max_request_body_bytes` | byte count | `"4MiB"` | Largest request body accepted. |
+| `token_counter` | string | `"none"` | `"backend"` allows `anthropic-count-tokens` through the backend's own endpoint. |
+
+**`backends.<name>`**:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `base_url` | string | required | Exactly `http://127.0.0.1:<port>`, port 1024–65535, no path, query or credentials. DNS names, wildcard, IPv6 and LAN addresses are refused. |
+| `protocol` | string | required | Must equal the profile's `protocol`. |
+| `qualification_profile` | string | required | A `qualification_profiles` name. |
+| `max_active_requests` | integer | `1` | Generations at once on this backend. Entries naming the same port share one limit. |
+| `credential` | string | unset | A `cmd:` or `vault:NAME` reference, resolved on the host and sent to the backend as a bearer token. Never guest-visible. Not allowed with `managed` (iso generates and stores the token). |
+| `run_as` | string | unset | The account the backend must run as. When set, a start fails with `INFERENCE_BACKEND_UNSAFE_OWNER` unless the account exists, differs from yours and you own no listener on the port (including when that cannot be checked). Managed backends always use `_isoinference`. |
+| `managed` | object | unset | Let iso install and run the backend (below). |
+
+**`backends.<name>.managed`**: an mlx-lm server that `iso inference provision`
+installs as a LaunchDaemon under the `_isoinference` role account, with a
+generated bearer token, root-owned code and weights, and a Seatbelt profile.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `server` | string | required | `"mlx-lm"`. |
+| `python` | string | one of | Absolute path of an interpreter that imports `mlx_lm` 0.31.x. Its executable, `sys.prefix` and `sys.base_prefix` trees must be root-owned and not group- or world-writable (so not a Homebrew or user-installed Python); `provision` checks this before running it. |
+| `install` | string | one of | Install this mlx-lm version (0.31.x) into a root-owned virtualenv instead. `provision` downloads the packages as the role account, in a staging directory, with binary wheels only, then makes the tree root-owned. Uses the network. |
+| `model` | string or object | required | An absolute model directory (copied in), or `{"repo": "OWNER/NAME", "revision": "<40-hex commit>"}` fetched by the role account during `provision`. |
+| `memory_limit` | byte count | unset | MLX memory ceiling (1 GiB–4 TiB). |
+| `confinement` | string | `"seatbelt"` | `"seatbelt"` or `"none"`. `none` is reported as unconfined in status, and the backend still has to run as the role account and require its token. |
+
+A managed backend's name becomes its launchd label and directory, so it may
+not start with `.`. `iso inference init` writes this configuration with
+hardened defaults.
+
+**`services.<name>`**: the name is the model alias the guest uses.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `backend` | string | required | A `backends` name. |
+| `upstream_model` | string | required | The backend's model id, substituted into every request. |
+| `frontend_apis` | array | required | APIs granted: `"anthropic-messages"` (Claude Code), `"openai-responses"` (Codex), `"openai-chat"`, `"anthropic-count-tokens"`, `"model-discovery"`. Each must match the backend protocol. |
+| `max_context_tokens` | integer | required | The model's context window; Claude Code is told it through `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. |
+| `default_output_tokens` | integer | `4096` | Output limit when a request sets none. |
+| `max_output_tokens` | integer | `8192` | Ceiling (≤ 32768). Larger requested limits are clamped, not rejected. |
+| `max_input_bytes` | byte count | unset | Tightens the profile's input bound. |
+
+Before a session starts, iso checks that the backend listens on 127.0.0.1 and
+answers on **no** non-loopback host address. A model server bound to `0.0.0.0`
+fails with `INFERENCE_BACKEND_UNSAFE_BIND`, because a guest could reach it
+directly. `egress: "none"` does not stop a vmnet guest from reaching services
+that listen on the Mac's other addresses. Run `iso inference doctor` to repeat
+the checks.
+
+For a backend with `run_as` or `managed`, iso also checks the owning account,
+and for managed backends that an unauthenticated request is refused, that the
+listener is the launchd job iso installed (it must answer the launcher's
+token-keyed challenge) and that the job runs sandboxed when confinement is
+`"seatbelt"`. A check that cannot be completed fails the start.
+`iso inference status` reports these as `host_checks`.
 
 ## `proxy` section
 

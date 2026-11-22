@@ -94,6 +94,41 @@
   //   }
   // },
 
+  // Guarded local inference through the host `iso-inference` gateway
+  // (docs/configuration.md#inference). With "required", agents use only these
+  // services: no cloud credential, credential proxy or raw model tunnel. Linux
+  // guests only. The backend is a server on 127.0.0.1 (yours, or one
+  // `iso inference provision` manages); its profile records what you qualified.
+  // `iso inference init` writes a hardened mlx-lm setup.
+  // "inference": {
+  //   "mode": "required",
+  //   "qualification_profiles": {
+  //     "reviewed": {
+  //       "protocol": "anthropic-messages",
+  //       "completion_evidence": "drain",   // "stream-close" or "none"
+  //       "context_overflow": "reject",     // or "truncate", "accept"
+  //       "input_overhead": { "per_request_bytes": 4096, "per_message_bytes": 64 },
+  //       "max_input_bytes": "512KiB"
+  //     }
+  //   },
+  //   "backends": {
+  //     "main": {
+  //       "base_url": "http://127.0.0.1:8080",
+  //       "protocol": "anthropic-messages",
+  //       "qualification_profile": "reviewed"
+  //     }
+  //   },
+  //   "services": {
+  //     "local-coder": {
+  //       "backend": "main",
+  //       "upstream_model": "my-org/coder-model",
+  //       "frontend_apis": ["anthropic-messages"],
+  //       "max_context_tokens": 131072
+  //     }
+  //   }
+  // },
+  // ...then select it per agent: "claude": { "local_model": { "service": "local-coder" } }
+
   // "profiles": {
   //   "my-tools": {
   //     "apt_packages": ["ripgrep", "fd-find", "jq"],
