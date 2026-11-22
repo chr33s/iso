@@ -130,16 +130,20 @@ verify_signature() {
     info "SHA256SUMS signature verified."
 }
 
-verify_checksum() {
-    local file="$1" expected="$2"
-    local actual
+sha256_of() {
     if command -v sha256sum > /dev/null 2>&1; then
-        actual="$(sha256sum "$file" | cut -d' ' -f1)"
+        sha256sum "$1" | cut -d' ' -f1
     elif command -v shasum > /dev/null 2>&1; then
-        actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
+        shasum -a 256 "$1" | cut -d' ' -f1
     else
         die "Neither sha256sum nor shasum found; the checksum check is mandatory"
     fi
+}
+
+verify_checksum() {
+    local file="$1" expected="$2"
+    local actual
+    actual="$(sha256_of "$file")"
 
     if [ "$actual" != "$expected" ]; then
         die "Checksum mismatch for $(basename "$file"): expected $expected, got $actual"
@@ -228,6 +232,7 @@ install_skill() {
 
 need curl
 need ssh-keygen
+need plutil
 detect_platform
 
 # `|| true`: under `set -e` a failed lookup would exit here, before the
@@ -270,24 +275,59 @@ tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}"
 
 info "Installing to ${INSTALL_DIR}..."
 EXTRACTED_DIR="${TMPDIR}/${BINARY}-${VERSION}-${TRIPLE}"
-# A release is one complete set. Check every member before changing the install.
-# Releases before v0.12.0 predate the iso-inference gateway, so only later
-# ones must carry it.
-REQUIRED=("$BINARY" iso-sandbox iso-macos-helper iso-proxy iso-egress)
-case "$VERSION" in
-    v0.[3-9].* | v0.1[01].*) ;;
-    *) REQUIRED+=(iso-inference) ;;
-esac
-for artifact in "${REQUIRED[@]}"; do
+# A release is one complete set, and its BUILD.json (written by
+# build-release.py into every archive since v0.3.0, and covered by the signed
+# SHA256SUMS through the tarball) names that set. Check every member before
+# changing the install: each listed binary must be a regular file matching its
+# recorded digest, and this installer's core binaries must all be listed. A
+# listed binary this installer does not know (a companion added after it) is
+# installed too, so an older install.sh never leaves a newer release partial.
+CORE_BINARIES=("$BINARY" iso-sandbox iso-macos-helper iso-proxy iso-egress)
+# Binaries an older supported release does not ship: the iso-inference gateway.
+OPTIONAL_BINARIES=(iso-inference)
+MANIFEST="${EXTRACTED_DIR}/BUILD.json"
+[ -f "$MANIFEST" ] && [ ! -L "$MANIFEST" ] || die "Release ${VERSION} has no regular BUILD.json manifest"
+LISTED="$(plutil -extract binaries raw -expect dictionary -o - "$MANIFEST" 2>/dev/null)" \
+    || die "Release ${VERSION}'s BUILD.json has no binaries map"
+RELEASE_BINARIES=()
+while IFS= read -r artifact; do
+    [ -n "$artifact" ] || continue
+    # A plutil key path splits at '.', and the name becomes an install path:
+    # only plain binary names are accepted.
+    case "$artifact" in
+        *[!a-z0-9-]* | -*) die "Release ${VERSION}'s BUILD.json lists an invalid binary name" ;;
+    esac
+    digest="$(plutil -extract "binaries.${artifact}" raw -expect string -o - "$MANIFEST" 2>/dev/null)" \
+        || die "Release ${VERSION}'s BUILD.json has no digest for ${artifact}"
     [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ] \
         || die "Release is missing a regular ${artifact} binary"
+    [ "$(sha256_of "${EXTRACTED_DIR}/${artifact}")" = "$digest" ] \
+        || die "Release ${VERSION}'s ${artifact} does not match its BUILD.json digest"
+    RELEASE_BINARIES+=("$artifact")
+done <<< "$LISTED"
+listed() {
+    case " ${RELEASE_BINARIES[*]} " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+for artifact in "${CORE_BINARIES[@]}"; do
+    listed "$artifact" || die "Release ${VERSION}'s BUILD.json does not list ${artifact}"
 done
 mkdir -p "$INSTALL_DIR"
-# Members an older release lacks: the iso-inference gateway, and the Linux
-# `desktop` images' MCP server and kernel (build-release.py requires all
-# three). A release without one removes any copy another release left, so
-# none stays beside binaries it was not built with.
-for artifact in iso-inference iso-cu-mcp vmlinux-desktop; do
+# An optional binary the release does not list is removed, so no copy another
+# release left stays beside binaries it was not built with.
+for artifact in "${OPTIONAL_BINARIES[@]}"; do
+    listed "$artifact" || rm -f "${INSTALL_DIR}/${artifact}"
+done
+# Every listed companion first; the host binary last.
+for artifact in "${RELEASE_BINARIES[@]}"; do
+    [ "$artifact" != "$BINARY" ] || continue
+    mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
+    chmod 0755 "${INSTALL_DIR}/${artifact}"
+done
+# Linux `desktop` images' MCP server and kernel. A release before them has
+# none (build-release.py requires them); its install removes any copy another
+# release left, so none stays beside a runtime it was not built with.
+for artifact in iso-cu-mcp vmlinux-desktop; do
     if [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ]; then
         mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
         chmod 0755 "${INSTALL_DIR}/${artifact}"
@@ -295,10 +335,8 @@ for artifact in iso-inference iso-cu-mcp vmlinux-desktop; do
         rm -f "${INSTALL_DIR}/${artifact}"
     fi
 done
-for artifact in iso-sandbox iso-macos-helper iso-proxy iso-egress "$BINARY"; do
-    mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
-    chmod +x "${INSTALL_DIR}/${artifact}"
-done
+mv "${EXTRACTED_DIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
+chmod 0755 "${INSTALL_DIR}/${BINARY}"
 
 printf '\n  %s %s installed to %s/%s\n' "$BINARY" "$VERSION" "$INSTALL_DIR" "$BINARY"
 

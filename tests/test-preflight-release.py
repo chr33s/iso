@@ -583,9 +583,11 @@ class ReleaseBinaryTests(unittest.TestCase):
             for index, words in enumerate(loops, 1):
                 lists[f'{path} loop {index}'] = set(words.split())
         installer = (ROOT / 'install.sh').read_text()
-        required = re.findall(r'\bREQUIRED\+?=\(([^)]*)\)', installer)
-        self.assertEqual(len(required), 2)
-        lists['install.sh REQUIRED'] = set(' '.join(required).replace('"$BINARY"', 'iso').split())
+        # The binaries install.sh knows (its BUILD.json check refuses any other).
+        known = re.findall(r'^(?:CORE|OPTIONAL)_BINARIES=\(([^)]*)\)', installer, re.MULTILINE)
+        self.assertEqual(len(known), 2)
+        lists['install.sh CORE_BINARIES + OPTIONAL_BINARIES'] = set(
+            ' '.join(known).replace('"$BINARY"', 'iso').split())
         for name, path in (('candidate', 'scripts/verify-candidate.py'),
                            ('acceptance', 'scripts/accept-release.py')):
             lists[path] = set(load_script(name, path).BINARIES)

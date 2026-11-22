@@ -57,6 +57,18 @@ printf 'installed-vmlinux-desktop\n' >"$FIXTURE/$ARCHIVE_DIR/vmlinux-desktop"
 mkdir -p "$FIXTURE/$ARCHIVE_DIR/skills/iso/references"
 printf '%s\n' 'release-skill' >"$FIXTURE/$ARCHIVE_DIR/skills/iso/SKILL.md"
 printf '%s\n' 'release-reference' >"$FIXTURE/$ARCHIVE_DIR/skills/iso/references/machine-interface.md"
+# BUILD.json as build-release.py writes it: every binary with its digest.
+RELEASE_BINARIES=(iso iso-proxy iso-inference iso-egress iso-sandbox iso-macos-helper)
+write_manifest() {
+    local dir="$1"; shift
+    local names=("$@") entries="" name
+    [[ ${#names[@]} -gt 0 ]] || names=("${RELEASE_BINARIES[@]}")
+    for name in "${names[@]}"; do
+        entries+="${entries:+,}\"${name}\":\"$(shasum -a 256 "$dir/$name" | cut -d' ' -f1)\""
+    done
+    printf '{"format":1,"binaries":{%s},"linux_guest_files":{}}\n' "$entries" >"$dir/BUILD.json"
+}
+write_manifest "$FIXTURE/$ARCHIVE_DIR"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
 
 SIGNING_KEY="$TEST_ROOT/release-key"
@@ -351,30 +363,87 @@ for missing in iso iso-sandbox iso-proxy iso-inference iso-egress iso-macos-help
     mv "$FIXTURE/missing-backup" "$FIXTURE/$ARCHIVE_DIR/$missing"
 done
 
-echo "==> Test 6a: a release before v0.12.0 installs without iso-inference"
-# Such a release predates the gateway. Its install removes an installed copy,
-# and a member that is not a regular file counts as absent.
-PRE_VERSION="v0.11.0"
-PRE_DIR="iso-${PRE_VERSION}-${TRIPLE}"
-cp -R "$FIXTURE/$ARCHIVE_DIR" "$FIXTURE/$PRE_DIR"
-for member in absent symlink; do
-    rm -f "$FIXTURE/$PRE_DIR/iso-inference"
-    [[ "$member" != symlink ]] || ln -s iso "$FIXTURE/$PRE_DIR/iso-inference"
-    (cd "$FIXTURE" && tar -czf "$PRE_DIR.tar.gz" "$PRE_DIR")
-    write_sums "$PRE_DIR.tar.gz"
+echo "==> Test 6a: a release whose BUILD.json omits iso-inference installs without it"
+# Releases before the gateway list no iso-inference. Their install removes an
+# installed copy, and an unlisted file in the archive is not installed.
+cp "$FIXTURE/$ARCHIVE_DIR/BUILD.json" "$FIXTURE/manifest-backup"
+write_manifest "$FIXTURE/$ARCHIVE_DIR" iso iso-proxy iso-egress iso-sandbox iso-macos-helper
+for member in absent unlisted; do
+    mv "$FIXTURE/$ARCHIVE_DIR/iso-inference" "$FIXTURE/inference-backup"
+    [[ "$member" != unlisted ]] || cp "$FIXTURE/inference-backup" "$FIXTURE/$ARCHIVE_DIR/iso-inference"
+    repack_fixture
     seed_install
-    if VERSION="$PRE_VERSION" run_installer >"$TEST_ROOT/pre-inference-$member.log" 2>&1 \
+    if run_installer >"$TEST_ROOT/pre-inference-$member.log" 2>&1 \
         && [[ "$("$INSTALL_DIR/iso")" == installed-iso \
            && "$("$INSTALL_DIR/iso-proxy")" == installed-iso-proxy \
            && ! -e "$INSTALL_DIR/iso-inference" && ! -L "$INSTALL_DIR/iso-inference" ]]; then
-        pass "$PRE_VERSION with iso-inference $member installs and removes the installed gateway"
+        pass "iso-inference $member from BUILD.json installs and removes the installed gateway"
     else
-        fail "$PRE_VERSION with iso-inference $member installs and removes the installed gateway" \
+        fail "iso-inference $member from BUILD.json installs and removes the installed gateway" \
             "$(tail -10 "$TEST_ROOT/pre-inference-$member.log"; ls -l "$INSTALL_DIR")"
     fi
+    rm -f "$FIXTURE/$ARCHIVE_DIR/iso-inference"
+    mv "$FIXTURE/inference-backup" "$FIXTURE/$ARCHIVE_DIR/iso-inference"
 done
-rm -rf "${FIXTURE:?}/$PRE_DIR" "$FIXTURE/$PRE_DIR.tar.gz"
-write_sums
+mv "$FIXTURE/manifest-backup" "$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+repack_fixture
+
+echo "==> Test 6b: a companion this installer does not know is installed too"
+cp "$FIXTURE/$ARCHIVE_DIR/BUILD.json" "$FIXTURE/manifest-backup"
+printf '#!/bin/sh\necho installed-iso-future\n' >"$FIXTURE/$ARCHIVE_DIR/iso-future"
+chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-future"
+write_manifest "$FIXTURE/$ARCHIVE_DIR" "${RELEASE_BINARIES[@]}" iso-future
+repack_fixture
+seed_install
+if run_installer >"$TEST_ROOT/future.log" 2>&1 \
+    && [[ "$("$INSTALL_DIR/iso-future")" == installed-iso-future \
+       && "$("$INSTALL_DIR/iso-inference")" == installed-iso-inference \
+       && "$("$INSTALL_DIR/iso")" == installed-iso ]]; then
+    pass "a listed iso-future is installed beside the known binaries"
+else
+    fail "a listed iso-future is installed beside the known binaries" "$(tail -10 "$TEST_ROOT/future.log")"
+fi
+rm -f "$FIXTURE/$ARCHIVE_DIR/iso-future" "$INSTALL_DIR/iso-future"
+mv "$FIXTURE/manifest-backup" "$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+repack_fixture
+
+echo "==> Test 6c: BUILD.json must describe the release before replacement"
+cp "$FIXTURE/$ARCHIVE_DIR/BUILD.json" "$FIXTURE/manifest-backup"
+refused_by_manifest() {
+    local label="$1" expected="$2"
+    repack_fixture
+    seed_install
+    if ! run_installer >"$TEST_ROOT/manifest-$label.log" 2>&1 \
+        && grep -qF "$expected" "$TEST_ROOT/manifest-$label.log" \
+        && install_unchanged; then
+        pass "$label is refused and preserves every installed binary"
+    else
+        fail "$label is refused and preserves every installed binary" \
+            "$(tail -10 "$TEST_ROOT/manifest-$label.log")"
+    fi
+    rm -f "$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+    cp "$FIXTURE/manifest-backup" "$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+}
+rm "$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+refused_by_manifest "a release without BUILD.json" "has no regular BUILD.json manifest"
+ln -sf "../manifest-backup" "$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+refused_by_manifest "a symlinked BUILD.json" "has no regular BUILD.json manifest"
+printf '{"binaries":["iso"]}\n' >"$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+refused_by_manifest "a binaries list that is not a map" "BUILD.json has no binaries map"
+write_manifest "$FIXTURE/$ARCHIVE_DIR" iso iso-inference iso-egress iso-sandbox iso-macos-helper
+refused_by_manifest "a BUILD.json without iso-proxy" "BUILD.json does not list iso-proxy"
+cp "$FIXTURE/$ARCHIVE_DIR/iso" "$FIXTURE/$ARCHIVE_DIR/iso.x"
+write_manifest "$FIXTURE/$ARCHIVE_DIR" "${RELEASE_BINARIES[@]}" iso.x
+refused_by_manifest "a dotted binary name" "lists an invalid binary name"
+rm "$FIXTURE/$ARCHIVE_DIR/iso.x"
+sed 's/"iso-inference":"[0-9a-f]*"/"iso-inference":"00"/' "$FIXTURE/manifest-backup" \
+    >"$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+refused_by_manifest "a digest mismatch" "iso-inference does not match its BUILD.json digest"
+sed 's/"iso-proxy":"[0-9a-f]*"/"iso-proxy":1/' "$FIXTURE/manifest-backup" \
+    >"$FIXTURE/$ARCHIVE_DIR/BUILD.json"
+refused_by_manifest "a digest that is not a string" "has no digest for iso-proxy"
+rm "$FIXTURE/manifest-backup"
+repack_fixture
 
 echo "==> Test 7: symlink artifacts are rejected before replacement"
 mv "$FIXTURE/$ARCHIVE_DIR/iso-egress" "$FIXTURE/egress-backup"
