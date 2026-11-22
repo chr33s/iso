@@ -2655,7 +2655,7 @@ FAULTS = [
     # A forward that dies during its boot revokes the instance until it
     # restarts or a grant is attached, as `iso inference revoke` does; no
     # command (even one waiting for the session lock) silently registers a
-    # new session over a new forward.
+    # new session over a new forward. The forward is always the system ssh.
     ("inference-forward-death-revokes", "Sources/IsoHost/Inference/InferenceController.swift",
      "    if forwardDied(instance) {", "    if false {",
      "aDeadForwardRevokesTheInstanceUntilItRestarts"),
@@ -2663,6 +2663,13 @@ FAULTS = [
      "    // Under the lock again: another command may have found the forward dead.\n    if withheld(instance) { return nil }\n",
      "",
      "aRevocationRecordedWhileWaitingForTheLockHolds"),
+    ("inference-forward-system-ssh", "Sources/IsoHost/Guest/ProxyLifecycle.swift",
+     "      destination: socket, ssh: inferenceSSH)", "      destination: socket)",
+     "theForwardRunsTheSystemSSHNeverOneFromPATH"),
+    ("inference-forward-ssh-default", "Sources/IsoHost/Guest/ProxyLifecycle.swift",
+     "    self.inferenceSSH = inferenceSSH\n",
+     "    self.inferenceSSH = SSHClient(environment: environment).sshExecutable() ?? inferenceSSH\n",
+     "theForwardRunsTheSystemSSHNeverOneFromPATH"),
     ("inference-stop-closes-forward", "Sources/IsoHost/Guest/ProxyLifecycle.swift",
      "    // brokered boot's forward is closed with it.\n    stopInferenceForward(instance)\n",
      "    // brokered boot's forward is closed with it.\n",

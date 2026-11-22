@@ -220,7 +220,7 @@ struct FakeGuest {
     ProxyLauncher(
       environment: environment, resolver: resolver ?? CredentialResolver(environment: environment),
       diagnostics: sink.diagnostics, isoExecutable: iso, sandboxExec: root + "/bin/sandbox-exec",
-      controlRoot: root)
+      controlRoot: root, inferenceSSH: root + "/bin/ssh")
   }
 
   func bootstrap(

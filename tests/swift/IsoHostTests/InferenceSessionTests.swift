@@ -788,6 +788,40 @@ private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
   #expect(rig.guest.log("tunnels.log").isEmpty)
 }
 
+/// The forward always runs the system `ssh` the gateway binds (§22.9), in
+/// debug builds too: never the first `ssh` on `PATH`. Only a unit test's
+/// double replaces it.
+@Test func theForwardRunsTheSystemSSHNeverOneFromPATH() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let decoy = rig.guest.root + "/decoy"
+  try writeFile(
+    decoy + "/ssh", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"\(decoy)/calls.log\"\nexit 1\n",
+    mode: 0o755)
+  var environment = rig.guest.environment
+  environment["PATH"] = decoy + ":" + (environment["PATH"] ?? "")
+  let resolver = CredentialResolver(environment: environment)
+  // As every command builds it: the system ssh, whatever PATH says.
+  let shipped = ProxyLauncher(
+    environment: environment, resolver: resolver, diagnostics: rig.guest.sink.diagnostics,
+    isoExecutable: nil)
+  #expect(shipped.inferenceSSH == "/usr/bin/ssh")
+  let defaulted = ProxyLauncher(
+    environment: environment, resolver: resolver, diagnostics: rig.guest.sink.diagnostics,
+    isoExecutable: nil, sandboxExec: "/usr/bin/false", controlRoot: rig.guest.root)
+  #expect(defaulted.inferenceSSH == "/usr/bin/ssh")
+  // The forward runs the configured client, not the PATH decoy.
+  let launcher = ProxyLauncher(
+    environment: environment, resolver: resolver, diagnostics: rig.guest.sink.diagnostics,
+    isoExecutable: nil, sandboxExec: "/usr/bin/false", controlRoot: rig.guest.root,
+    inferenceSSH: rig.guest.root + "/bin/ssh")
+  let forward = try launcher.startInferenceForward(
+    rig.instance, target: rig.guest.target, socket: rig.relay + "/8e84.sock")
+  defer { kill(forward.pid, SIGKILL) }
+  #expect(readFile(decoy + "/calls.log") == nil)
+  #expect(rig.guest.log("tunnels.log").filter { $0.hasPrefix("forward ") }.count == 1)
+}
+
 /// Whether `condition` holds within five seconds.
 private func waitUntil(_ condition: () -> Bool) -> Bool {
   let deadline = ContinuousClock.now + .seconds(5)

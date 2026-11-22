@@ -29,6 +29,12 @@ package struct ProxyLauncher: Sendable {
   let sandboxExec: String
   let controlRoot: String
   let verifyCompanion: @Sendable (String) throws -> TrustedExecutable
+  /// The `ssh` the guarded-inference forward runs (§22.9): always the
+  /// system one, the only executable the gateway binds a `forward` session
+  /// to, in debug and release builds alike and never from `PATH`. Only unit
+  /// tests substitute a double.
+  let inferenceSSH: String
+  package static let systemSSH = "/usr/bin/ssh"
 
   package init(
     environment: [String: String], resolver: CredentialResolver, diagnostics: Diagnostics,
@@ -43,7 +49,8 @@ package struct ProxyLauncher: Sendable {
     environment: [String: String], resolver: CredentialResolver, diagnostics: Diagnostics,
     isoExecutable: String?, sandboxExec: String, controlRoot: String,
     verifyCompanion: @escaping @Sendable (String) throws -> TrustedExecutable = CompanionSignature
-      .verifyForRelease
+      .verifyForRelease,
+    inferenceSSH: String = ProxyLauncher.systemSSH
   ) {
     self.environment = environment
     self.resolver = resolver
@@ -52,6 +59,7 @@ package struct ProxyLauncher: Sendable {
     self.sandboxExec = sandboxExec
     self.controlRoot = controlRoot
     self.verifyCompanion = verifyCompanion
+    self.inferenceSSH = inferenceSSH
   }
 
   // MARK: Paths
@@ -608,14 +616,15 @@ package struct ProxyLauncher: Sendable {
   }
 
   /// `spawnReverseForward` to `destination`: `ADDRESS:PORT` on the host, or
-  /// the absolute path of a host Unix socket.
+  /// the absolute path of a host Unix socket. `ssh` is the client to run;
+  /// nil looks it up as other SSH clients do.
   func spawnReverseForward(
     _ instance: Instance, name: String, target: SSHTarget, guestPort: UInt16,
-    destination: String
+    destination: String, ssh fixed: String? = nil
   ) throws {
     stopTunnel(instance, name, label: "stale proxy tunnel")
     let client = SSHClient(environment: environment)
-    guard let ssh = client.sshExecutable() else {
+    guard let ssh = fixed ?? client.sshExecutable() else {
       throw HostError("Failed to spawn the reverse SSH tunnel for the credential proxy")
     }
     var template = Array((controlRoot + "/iso-proxy-XXXXXX").utf8CString)
@@ -866,7 +875,7 @@ package struct ProxyLauncher: Sendable {
     let name = Self.inferenceTunnelName
     try spawnReverseForward(
       instance, name: name, target: target, guestPort: InferenceController.guestPort,
-      destination: socket)
+      destination: socket, ssh: inferenceSSH)
     guard let identity = TunnelIdentity.load(instance, name), identity.isRunning(as: identity.pid),
       let start = HostProcess.start(identity.pid)
     else {
