@@ -674,7 +674,7 @@ reaching ghcr.io; the seed is not re-verified.
 
 Phases: `setup disks machine isolation exposure identity brokered relay
 persistence resources growth snapshots recovery concurrency display iso
-inference`. The `iso` phase also
+inference brokered-inference`. The `iso` phase also
 creates a brokered instance (`network.transport: "brokered"`, `egress:
 "none"`) and checks its NIC-less record, workspace copy and pull over the
 stream, machine-status network digest, refusal under a vmnet configuration,
@@ -1641,6 +1641,16 @@ python3 scripts/swift-host-fault-injection.py --only inference-unsafe-bind   # a
   Claude Code and Codex each complete a turn, the guest bridge and relayed
   socket with no gateway TCP listener, revocation on `iso stop` and
   `iso inference revoke`, and the unsafe-bind refusal.
+- **The brokered VM phase** (`brokered-inference`) boots a NIC-less brokered
+  VM under `required`. It checks that the runtime relays nothing, that no
+  guest bridge exists and the forward's `sshd` alone holds guest port 11788,
+  and that the session is bound to the system `ssh` forward. It also checks
+  the grant in `iso policy effective` and `iso status`, capability
+  enforcement and a Claude Code turn through the forward, that the backend
+  port and an unrelated host loopback port are unreachable from the guest,
+  that `iso inference revoke` closes an open guest stream and the forward, a
+  fresh session and forward after a restart, and that the forward's exit
+  revokes its session. It has not yet been run on hardware.
 
 Not covered by automated tests: qualifying a real MLX server and model, and
 the root provisioning step on a real system. Qualification values are owner

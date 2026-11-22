@@ -8,7 +8,7 @@ set -uo pipefail
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity brokered
 #           relay persistence resources growth snapshots recovery concurrency display
-#           iso inference
+#           iso inference brokered-inference
 #   ISO_TEST_DESKTOP_KERNEL=PATH: a pinned desktop kernel
 #   (scripts/build-desktop-kernel.sh) for the display phase, which skips
 #   without it.
@@ -2220,6 +2220,162 @@ if want inference; then
     fi
     kill "$backend_a" "$backend_r" 2>/dev/null
     iinf inference stop --force >/dev/null 2>&1
+    rm -f "$(dirname "$ISO")/iso-inference"
+fi
+
+# Guarded local inference on the brokered transport (secure-local-inference
+# spec §22.9): a NIC-less VM under `inference.mode = "required"` reaches a
+# scripted host backend only through the gateway, over iso's one fixed
+# `ssh -R 127.0.0.1:11788:<session socket>` forward. No runtime relay or guest
+# bridge exists, an unrelated host loopback port stays unreachable, and a
+# revocation closes an open guest stream. Uses the per-user gateway location
+# and stops that gateway at the end, like the inference phase. /usr/bin is
+# first on PATH so the forward is the system ssh the gateway accepts.
+if want brokered-inference; then
+    echo ""
+    echo "=== Phase: brokered-inference ==="
+    kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
+    BCFG="$WORK/iso-brokered-inference.jsonc"
+    binf() { PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" "$ISO" --config "$BCFG" "$@" </dev/null; }
+    free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+    bguest_code() { binf exec binf -- curl -s -o /dev/null -w '%{http_code}' "$@" 2>/dev/null; }
+    port_b="$(free_port)"
+    port_x="$(free_port)"
+    log_b="$WORK/backend-brokered.jsonl"
+    : >"$log_b"
+    python3 tests/fixtures/inference-backend.py anthropic-messages 127.0.0.1 "$port_b" "$log_b" &
+    backend_b=$!
+    # An unrelated host loopback service the guest must never reach.
+    python3 -c 'import socket, sys, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(8)
+while True:
+    c, _ = s.accept(); c.sendall(b"HOST-ONLY\n"); c.close()' "$port_x" &
+    unrelated=$!
+    jq -n --arg data "$CDATA" --arg binary "$SANDBOX" --arg builder "$CONTAINER" \
+        --arg kernel "$kernel" --argjson pb "$port_b" '
+        {data_dir: $data, github: "off", egress: "none", network: {transport: "brokered"},
+         vm: {vcpu_count: 2, mem_size_mib: 2048, template_size_gib: 8},
+         apple_container: {binary: $binary, builder: $builder, kernel: $kernel},
+         inference: {mode: "required",
+           qualification_profiles: {anthropic: {protocol: "anthropic-messages",
+             completion_evidence: "drain", context_overflow: "reject",
+             input_overhead: {per_request_bytes: 4096, per_message_bytes: 64},
+             max_input_bytes: "2MiB"}},
+           backends: {"fake-anthropic": {base_url: "http://127.0.0.1:\($pb)",
+             protocol: "anthropic-messages", qualification_profile: "anthropic"}},
+           services: {"local-claude": {backend: "fake-anthropic",
+             upstream_model: "fake/claude-upstream", frontend_apis: ["anthropic-messages"],
+             max_context_tokens: 200000}}},
+         claude: {config_dir: false, local_model: {service: "local-claude"}},
+         codex: {config_dir: false}}' >"$BCFG"
+    if [[ ! -x "$ISO" ]]; then
+        swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
+            >"$WORK/iso-build.log" 2>&1 || fail "brokered-inference: iso builds" "see $WORK/iso-build.log"
+    fi
+    if { if [[ -n "$PREBUILT" ]]; then
+            cp -p "$PREBUILT/iso-inference" "$(dirname "$ISO")/iso-inference"
+        else
+            swift build --package-path iso-proxy --product iso-inference --force-resolved-versions \
+                --scratch-path "$WORK/proxy-build" &&
+                cp "$WORK/proxy-build/debug/iso-inference" "$(dirname "$ISO")/iso-inference"
+        fi; } >"$WORK/brokered-inference-build.log" 2>&1 &&
+        binf setup -y >"$WORK/brokered-inference-setup.log" 2>&1; then
+        pass "brokered-inference: iso-inference is installed beside iso and the image is ready"
+    else
+        fail "brokered-inference: iso-inference is installed beside iso and the image is ready" \
+            "see $WORK/brokered-inference-build.log, $WORK/brokered-inference-setup.log"
+    fi
+    mkdir -p "$WORK/project-binf"
+    if ANTHROPIC_API_KEY="$CANARY" binf up "$WORK/project-binf" --name binf --no-github \
+        >"$WORK/iso-up-binf.log" 2>&1; then
+        pass "brokered-inference: iso up boots a brokered VM under inference.mode required"
+        machine="$(machine_id binf)"
+        inspected="$(csbx inspect "$machine")"
+        check "brokered-inference: the VM has no network device and no socket relay" \
+            jq -e '.effective.brokered.networkDevices == 0 and .effective.socketRelays == 0 and .effective.inferenceRelay == null and (.record.inferenceRelay // false) == false' <<<"$inspected"
+        check "brokered-inference: the effective policy names the inference grant" \
+            grep -q "local_services: inference-gateway" <<<"$(binf policy effective binf 2>/dev/null)"
+        check "brokered-inference: status names the inference-gateway local service" \
+            grep -q "inference-gateway" <<<"$(binf status binf 2>/dev/null)"
+        state="$(binf inference status binf --json)"
+        check "brokered-inference: the gateway reports one active forward session" \
+            test "$(jq -r '[.sessions[] | select(.state == "active" and .transport_kind == "forward")] | length' <<<"$state")" = 1
+        forward_pid="$(jq -r '.sessions[0].transport_pid' <<<"$state")"
+        check "brokered-inference: the session is bound to the system ssh forward" \
+            test "$(ps -o comm= -p "$forward_pid" 2>/dev/null)" = /usr/bin/ssh
+        check "brokered-inference: the forward's sshd alone listens on guest 127.0.0.1:11788" \
+            grep -q '"sshd' <<<"$(binf exec binf -- sudo ss -ltnpH 'sport = :11788' 2>/dev/null)"
+        check "brokered-inference: the recorded state binds the session to the forward" \
+            test "$(jq -r '"\(.transport) \(.forward_pid)"' "$CSTATE/instances/binf/inference.json")" = "forward $forward_pid"
+        check "brokered-inference: no guest bridge is installed" \
+            refuses binf exec binf -- systemctl is-active --quiet iso-inference.socket
+        check "brokered-inference: no relayed socket exists in the guest" \
+            refuses binf exec binf -- test -e /var/lib/iso-inference/gateway.sock
+        check "brokered-inference: no provider credential reaches the guest" \
+            refuses grep -q "$CANARY" <<<"$(binf exec binf -- env 2>/dev/null)"
+        # shellcheck disable=SC2016 # Expand in the guest.
+        token="$(binf exec binf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        check "brokered-inference: Claude's managed settings carry a 64-hex capability" test "${#token}" = 64
+        check "brokered-inference: Claude's managed settings name the same guest URL" \
+            binf exec binf -- grep -q "http://127.0.0.1:11788" .claude/settings.json
+        body='{"model":"local-claude","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"stream":true}'
+        url=http://127.0.0.1:11788/v1/messages
+        check "brokered-inference: a request without the capability is refused (401)" \
+            test "$(bguest_code -H 'content-type: application/json' -d "$body" "$url")" = 401
+        reply="$(binf exec binf -- curl -s -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -d "$body" "$url" 2>/dev/null)"
+        check "brokered-inference: an authorized request streams through the forward" \
+            grep -q '"model":"local-claude"' <<<"$reply"
+        check "brokered-inference: the backend received the host-selected model" \
+            test "$(tail -1 "$log_b" | jq -r .body.model)" = fake/claude-upstream
+        check "brokered-inference: the backend port is not reachable from the guest" \
+            refuses binf exec binf -- timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port_b"
+        check "brokered-inference: an unrelated host loopback port is not reachable from the guest" \
+            refuses binf exec binf -- timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port_x"
+        claude_out="$(binf exec binf -- sh -c 'cd /tmp && timeout 180 ~/.local/bin/claude -p "say ok" 2>&1' 2>/dev/null)"
+        check "brokered-inference: Claude Code completes a turn through the forward" grep -qx "ok" <<<"$claude_out"
+        # Revocation closes an open guest stream and the forward (NET-08): a
+        # connection holding a partial request ends at EOF, not its timeout.
+        # shellcheck disable=SC2016 # Expand in the guest.
+        binf exec binf -- sh -c 'rm -f /tmp/stream.out; nohup bash -c "exec 3<>/dev/tcp/127.0.0.1/11788 && printf \"POST /v1/messages HTTP/1.1\r\nHost: x\r\n\" >&3 && timeout 30 cat <&3 >/dev/null; echo closed \$?" >/tmp/stream.out 2>&1 &' \
+            >/dev/null 2>&1
+        sleep 2
+        check "brokered-inference: iso inference revoke succeeds" binf inference revoke binf
+        sleep 3
+        check "brokered-inference: revocation closed the open stream" \
+            test "$(binf exec binf -- cat /tmp/stream.out 2>/dev/null)" = "closed 0"
+        check "brokered-inference: revocation stopped the forward" refuses kill -0 "$forward_pid"
+        check "brokered-inference: and no session stays" \
+            test "$(binf inference status binf --json | jq -r '.sessions | length')" = 0
+        check "brokered-inference: the guest port refuses connections after revocation" \
+            test "$(bguest_code -H 'content-type: application/json' -d "$body" "$url")" = 000
+        check "brokered-inference: a revoked VM still runs commands" \
+            test "$(binf exec binf -- echo ok 2>/dev/null)" = ok
+        # A restart lifts the manual revocation with a fresh session and forward.
+        check "brokered-inference: iso stop succeeds" binf stop binf
+        check "brokered-inference: iso start establishes a fresh session" binf start binf --no-github
+        check "brokered-inference: the next command runs" test "$(binf exec binf -- echo ok 2>/dev/null)" = ok
+        state="$(binf inference status binf --json)"
+        next_pid="$(jq -r '.sessions[0].transport_pid' <<<"$state")"
+        check "brokered-inference: the new session has a new forward" \
+            test "$next_pid" != "$forward_pid" -a "$(jq -r '.sessions[0].transport_kind' <<<"$state")" = forward
+        check "brokered-inference: the old capability no longer works" \
+            test "$(bguest_code -H "authorization: Bearer $token" -H 'content-type: application/json' \
+                -d "$body" "$url")" = 401
+        # The forward's death revokes the session at the gateway.
+        kill "$next_pid" 2>/dev/null
+        sleep 2
+        check "brokered-inference: the forward's exit revokes its session" \
+            test "$(PATH="/usr/bin:$PATH" "$ISO" --config "$BCFG" inference status binf --json </dev/null | jq -r '[.sessions[] | select(.state == "active")] | length')" = 0
+        check "brokered-inference: iso stop succeeds again" binf stop binf
+        binf destroy binf >/dev/null 2>&1
+    else
+        fail "brokered-inference: iso up boots a brokered VM under inference.mode required" \
+            "see $WORK/iso-up-binf.log"
+    fi
+    kill "$backend_b" "$unrelated" 2>/dev/null
+    binf inference stop --force >/dev/null 2>&1
     rm -f "$(dirname "$ISO")/iso-inference"
 fi
 
