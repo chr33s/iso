@@ -255,15 +255,18 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
 @Test func aRegistrationWithoutItsNonceIsNotActivated() throws {
   let rig = try Rig()
   defer { rig.remove() }
+  let ports = rig.backends.map { Int($0.port) }
   rig.gateway.state.withLock {
     $0.override["inspect"] = [
-      "ok": true, "gateway": ["epoch": "epoch-1"],
+      "ok": true, "gateway": ["epoch": "epoch-1", "gateway_egress_ports": ports],
       "sessions": [["session_id": "session-1", "nonce": "other", "state": "inactive"]],
     ]
   }
-  #expect(throws: (any Error).self) {
+  let error = try #require(throws: (any Error).self) {
     try rig.controller().ensureSession(rig.instance, target: rig.guest.target)
   }
+  #expect("\(error)".contains("nonce"))
+  #expect(rig.gateway.ops.contains("register_session"))
   #expect(!rig.gateway.ops.contains("activate_session"))
   #expect(!exists(InferenceController.statePath(rig.instance)))
 }
