@@ -1,7 +1,7 @@
 import Foundation
 import IsoCore
 
-/// Typed parsers for `iso-sandbox` JSON output (protocol 5). Runtime output
+/// Typed parsers for `iso-sandbox` JSON output (protocol 6). Runtime output
 /// is untrusted: records decode into closed types, identifiers are checked
 /// against the one requested, and the gate's effective config rejects unknown
 /// fields, so a runtime growing a host-facing setting fails closed. Diagnostic
@@ -348,7 +348,7 @@ package struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 
 package enum RuntimeProtocol {
   /// Protocol advertised by this checkout's runtime.
-  package static let version: UInt32 = 5
+  package static let version: UInt32 = 6
   /// The protocol that introduced the live boot identity filtered egress
   /// binds to; every later protocol keeps it.
   package static let bootIdentity: UInt32 = 5

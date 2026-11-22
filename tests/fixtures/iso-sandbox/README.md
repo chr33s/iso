@@ -1,6 +1,6 @@
 # iso-sandbox fixtures
 
-Representative protocol-5 output from `iso-sandbox` 0.1.0 with
+Representative protocol-6 output from `iso-sandbox` 0.1.0 with
 containerization 0.54.0, used by host runtime-boundary tests.
 
 - `version.json` — what `iso-sandbox version` prints from a default build:

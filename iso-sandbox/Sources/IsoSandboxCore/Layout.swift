@@ -4,7 +4,8 @@ import IsoMacProtocol
 
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
-package let protocolVersion = 5
+/// 6 adds the inference relay (``InferenceRelay``).
+package let protocolVersion = 6
 /// `version` capability: `macos …` commands (the host's `RuntimeProtocol.macFeature`).
 package let macGuestsFeature = "macos-guests"
 /// `version` capability: `create --network brokered`, `start --network-policy`,
