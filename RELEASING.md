@@ -77,8 +77,9 @@ that runs it. It requires Apple Silicon macOS 27+.
 - **`ci.yml`** runs on pushes and pull requests: the Swift host
   format/build/test gates and Python host checks, fuzz corpus replay and a
   bounded smoke, the `iso-proxy` and `iso-sandbox` package tests, the
-  host-only install/update/uninstall suites and regression scripts, and
-  `zizmor`.
+  `iso-inference` gateway's confined-process gate and the managed-backend
+  launcher test (`mise run check-inference`), the host-only
+  install/update/uninstall suites and regression scripts, and `zizmor`.
 - **`candidate.yml`** builds and tests a same-revision candidate with
   `scripts/build-release.py --release --test`, then, as `release.yml` does,
   signs and notarizes it in a separate `sign-macos` job in the `release`
