@@ -244,7 +244,7 @@ struct FakeGuest {
     try writeFile(
       root + "/app/iso-proxy",
       """
-      #!/usr/bin/python3
+      #!\(try requireSystemPython())
       import json, os, socket, sys
       data = sys.stdin.read()
       open("\(root)/proxy-stdin", "w").write(data)

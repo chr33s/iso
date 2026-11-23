@@ -214,7 +214,7 @@ private func hostileArchive(_ path: String, _ script: String) throws {
     """
   let output = try ProcessRunner().capture(
     .init(
-      executable: "/usr/bin/python3", arguments: ["-I", "-c", python, path],
+      executable: try requireSystemPython(), arguments: ["-I", "-c", python, path],
       environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(30)))
   guard output.termination.succeeded else {
     throw HostError("archive: \(String(decoding: output.stderr, as: UTF8.self))")
@@ -230,7 +230,7 @@ private func hostileArchive(_ path: String, _ script: String) throws {
   ("dup", #"f("a", b"one"); f("a", b"two")"#),
 ])
 func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throws {
-  guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { return }
+  guard systemPython != nil else { return }
   let f = try ReturnFixture()
   defer { f.cleanup() }
   let archive = f.root + "/hostile.tar"
@@ -274,8 +274,7 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
 /// bsdtar with `-P`, which honors absolute member names, stands in for one.
 @Test(
   .enabled(
-    if: FileManager.default.isExecutableFile(atPath: "/usr/bin/python3"),
-    "builds its hostile archive with /usr/bin/python3"))
+    if: systemPython != nil, "builds its hostile archive with the system python3"))
 func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   let f = try ReturnFixture()
   defer { f.cleanup() }

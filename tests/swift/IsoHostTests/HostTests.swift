@@ -424,12 +424,12 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   let lock = try FileLock.sibling(of: target)
   #expect(FileManager.default.fileExists(atPath: directory + "/.config.jsonc.lock"))
   let probe = try sh(
-    "/usr/bin/python3 -c 'import fcntl,sys; f=open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB)' \(directory)/.config.jsonc.lock"
+    "\(try requireSystemPython()) -c 'import fcntl,sys; f=open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB)' \(directory)/.config.jsonc.lock"
   )
   #expect(probe.termination != .exited(0))
   lock.release()
   let after = try sh(
-    "/usr/bin/python3 -c 'import fcntl,sys; f=open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB)' \(directory)/.config.jsonc.lock"
+    "\(try requireSystemPython()) -c 'import fcntl,sys; f=open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB)' \(directory)/.config.jsonc.lock"
   )
   #expect(after.termination == .exited(0))
 }

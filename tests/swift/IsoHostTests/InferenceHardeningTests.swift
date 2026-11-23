@@ -21,13 +21,7 @@ private func plan(
     confinement: confinement, token: Secret(token))
 }
 
-private func python() throws -> String {
-  for candidate in ["/usr/bin/python3", "/opt/homebrew/bin/python3"]
-  where FileManager.default.isExecutableFile(atPath: candidate) {
-    return candidate
-  }
-  throw HostError("no python3")
-}
+private func python() throws -> String { try requireSystemPython() }
 
 @Test func embeddedInferenceResourcesMatchTheirFiles() throws {
   for (embedded, file) in [
@@ -165,7 +159,7 @@ private struct FakeSystem {
       #!/bin/sh
       echo "launchctl $*" >> "\(log)"
       case "$1" in
-        bootstrap) /usr/bin/python3 "\(root)/backend.py" \(port) "\(layout.token)" >/dev/null 2>&1 &
+        bootstrap) "\(try requireSystemPython())" "\(root)/backend.py" \(port) "\(layout.token)" >/dev/null 2>&1 &
                    echo $! > "\(root)/backend.pid" ;;
         bootout|kickstart) [ -f "\(root)/backend.pid" ] && kill "$(cat "\(root)/backend.pid")" 2>/dev/null ;;
       esac
@@ -336,7 +330,7 @@ private func mode(_ path: String) -> mode_t {
   defer { try? FileManager.default.removeItem(atPath: mine) }
   #expect(throws: HostError.self) { try provisioner.requireRootOwned(mine) }
   try provisioner.requireRootOwned("/usr/bin/true")
-  let runtime = try provisioner.inspect("/usr/bin/python3")
+  let runtime = try provisioner.inspect(try requireSystemPython())
   #expect(runtime.executable.hasPrefix("/") && runtime.prefix == runtime.basePrefix)
 }
 
@@ -430,7 +424,7 @@ private func managedBackend(_ confinement: String = "seatbelt") throws -> Infere
     HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
     """)
   let server = Process()
-  server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+  server.executableURL = URL(fileURLWithPath: try requireSystemPython())
   server.arguments = [root + "/server.py", String(chosen), token]
   try server.run()
   defer { server.terminate() }
@@ -502,7 +496,7 @@ private func managedBackend(_ confinement: String = "seatbelt") throws -> Infere
     echo "$*" >> "\(log)"
     for last; do :; done
     case "$*" in
-      *" -m venv "*) mkdir -p "$last/bin" && ln -sf /usr/bin/python3 "$last/bin/python" ;;
+      *" -m venv "*) mkdir -p "$last/bin" && ln -sf "\(try requireSystemPython())" "$last/bin/python" ;;
     esac
     exit 0
     """, mode: 0o755)

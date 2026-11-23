@@ -195,7 +195,7 @@ private func handoffFailure(
   // The child reports once it holds the lock, so a slow interpreter start on
   // a loaded runner cannot race a fixed polling deadline.
   let child = Process()
-  child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+  child.executableURL = URL(fileURLWithPath: try requireSystemPython())
   child.arguments = [
     "-c",
     "import fcntl,time,sys; f=open(sys.argv[1],'a+'); fcntl.flock(f,fcntl.LOCK_EX); "
