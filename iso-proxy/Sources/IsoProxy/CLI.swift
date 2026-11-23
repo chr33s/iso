@@ -101,7 +101,7 @@ struct ProxyMain {
       try await upstream.shutdown()
       try await group.shutdownGracefully()
       log(
-        "iso-proxy jail self-test: write/exec/egress/loopback-443/loopback-53/home-read denied; DNS/system TLS passed"
+        "iso-proxy jail self-test: write/exec/egress/loopback-443/loopback-53/home-read/process-info denied; DNS/system TLS passed"
       )
     } catch {
       log("iso-proxy self-test failure category: \(String(describing: type(of: error)))")

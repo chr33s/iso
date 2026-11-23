@@ -82,12 +82,15 @@ SPDX-License-Identifier: Apache-2.0
   guest (the host sends only their names), and Claude's managed settings use
   an `apiKeyHelper` that prints it instead of `ANTHROPIC_AUTH_TOKEN`. The
   host's `inference.token` is no longer written, and an old one is removed.
-- **The gateway reads no other process's information.** Its Seatbelt
-  profile denies `process-info*` except for itself (`deny default` alone left
-  `proc_pidinfo` and `proc_pidpath` on this user's processes allowed), and
-  its startup self-test checks the denial. The process checks it made at
-  activation (owner name, `/usr/bin/ssh`, user) are iso's, before it reads
-  the PID version.
+- **No confined process reads another process's information.** Every
+  Seatbelt profile iso applies (credential proxy, egress companion, tar
+  receiver, inference broker and workers, managed backend, and the iso-ci
+  data plane) denies `process-info*` except for the process itself; `deny
+  default` alone left `proc_pidinfo` and `proc_pidpath` on this user's
+  processes allowed. The self-tests of `iso-proxy`, `iso-egress`,
+  `iso-inference` and the iso-ci data plane check the denial. The process
+  checks the gateway made at activation (owner name, `/usr/bin/ssh`, user)
+  are iso's, before it reads the PID version.
 - **Managed backends prove every connection.** Before it sends the token or
   a prompt on a connection to a managed backend, the gateway asks the
   launcher's challenge on that connection and checks the answer. A process

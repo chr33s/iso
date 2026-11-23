@@ -21,10 +21,10 @@ def confined(binary):
         str(binary), "--jail-selftest",
     ]
     result = subprocess.run(command, capture_output=True, text=True, env={}, timeout=30)
-    expected = "write/exec/non-443/loopback-443/loopback-53/home-read denied; loopback bind allowed"
+    expected = "write/exec/non-443/loopback-443/loopback-53/home-read/process-info denied; loopback bind allowed"
     if result.returncode != 0 or expected not in result.stderr:
         raise SystemExit(f"jail self-test failed:\n{result.stderr}")
-    print("PASS egress profile denies write/exec/non-443/loopback-443/loopback-53/home-read "
+    print("PASS egress profile denies write/exec/non-443/loopback-443/loopback-53/home-read/process-info "
           "and allows loopback bind", flush=True)
 
 

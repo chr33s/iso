@@ -129,7 +129,7 @@ enum JailSelfTest {
     if failures.isEmpty {
       FileHandle.standardError.write(
         Data(
-          "iso-egress jail self-test: write/exec/non-443/loopback-443/loopback-53/home-read denied; loopback bind allowed\n"
+          "iso-egress jail self-test: write/exec/non-443/loopback-443/loopback-53/home-read/process-info denied; loopback bind allowed\n"
             .utf8))
       return 0
     }

@@ -10,7 +10,7 @@ import IsoProxyCore
 enum Jail {
   enum Failure: Error {
     case coreLimit, fileWriteAllowed, execAllowed, egressAllowed, loopbackHTTPSAllowed
-    case loopbackDNSAllowed, httpsDenied, homeReadAllowed
+    case loopbackDNSAllowed, httpsDenied, homeReadAllowed, processInfoAllowed
   }
 
   static func disableCoreDumps() throws {
@@ -32,6 +32,7 @@ enum Jail {
     guard !denied("192.0.2.1", port: 443) else { throw Failure.httpsDenied }
 
     guard JailProbes.isDenial(JailProbes.homeReadError()) else { throw Failure.homeReadAllowed }
+    guard !JailProbes.readsOtherProcesses() else { throw Failure.processInfoAllowed }
   }
 
   private static func denied(_ host: String, port: UInt16) -> Bool {

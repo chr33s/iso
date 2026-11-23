@@ -128,6 +128,10 @@ package enum DataPlaneChild {
       waitpid(pid, &status, 0)
     }
     checks["exec_denied"] = .bool(spawned != 0)
+    // launchd's executable path is readable to this user unless the profile
+    // denies process information explicitly (`deny default` alone does not).
+    var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    checks["process_info_denied"] = .bool(proc_pidpath(1, &path, UInt32(path.count)) <= 0)
     let confined = checks.values.allSatisfy { $0 == .bool(true) }
     return (confined, ["confined": .bool(confined), "checks": .object(checks)])
   }

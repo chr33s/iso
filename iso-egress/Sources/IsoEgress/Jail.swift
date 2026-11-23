@@ -13,7 +13,7 @@ import Foundation
 enum Jail {
   enum Failure: Error {
     case coreLimit, fileWriteAllowed, execAllowed, egressAllowed, loopbackHTTPSAllowed
-    case loopbackDNSAllowed, httpsDenied, homeReadAllowed
+    case loopbackDNSAllowed, httpsDenied, homeReadAllowed, processInfoAllowed
   }
 
   static func disableCoreDumps() throws {
@@ -47,6 +47,14 @@ enum Jail {
     var home = openError(homeDirectory())
     if home == ENOENT { home = openError("/Users") }
     guard denied(home) else { throw Failure.homeReadAllowed }
+    // launchd's executable path is readable to this user unless the profile
+    // denies process information explicitly (`deny default` alone does not).
+    var launchd = [UInt8](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    // proc_pidpath writes at most `launchd.count` bytes into the buffer borrowed here.
+    let length = launchd.withUnsafeMutableBytes { raw in
+      unsafe proc_pidpath(1, raw.baseAddress, UInt32(raw.count))
+    }
+    guard length <= 0 else { throw Failure.processInfoAllowed }
   }
 
   private static func denied(_ code: Int32) -> Bool { code == EPERM || code == EACCES }

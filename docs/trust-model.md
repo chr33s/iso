@@ -1099,8 +1099,9 @@ The gateway enforces an API boundary. It does not isolate the host.
   binary and the state directory; metadata reads (stat) on any path, for
   path resolution; and no information about any other process.
   `deny default` alone still lets a confined process read this user's other
-  processes with `proc_pidinfo` and `proc_pidpath`, so the profile denies
-  `process-info*` explicitly and allows only the broker's own; the exit watch and the peer token need
+  processes with `proc_pidinfo` and `proc_pidpath`, so this profile, like
+  every other profile iso applies, denies `process-info*` explicitly and
+  allows only the process's own; the exit watch and the peer token need
   neither. The broker checks its own confinement at every start, including
   that writes in the relay directory, every loopback port and reading
   another process's information are denied. The control socket is `0600`. Both sides check

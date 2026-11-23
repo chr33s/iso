@@ -383,6 +383,9 @@ enum EmbeddedInference {
 
     (allow sysctl-read)
     (allow system-socket)
+    ;; No information about any other process: `deny default` alone leaves
+    ;; proc_pidinfo and proc_pidpath on this user's processes allowed.
+    (deny process-info*)
     (allow process-info* (target self))
 
     ;; Metal compute: the GPU device and IOSurface user clients and the shader

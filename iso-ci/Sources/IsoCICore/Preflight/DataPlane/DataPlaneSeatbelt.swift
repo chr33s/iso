@@ -45,6 +45,9 @@ package enum DataPlaneSeatbelt {
     (allow network-bind (local unix-socket (subpath (param "SOCKETS"))))
     (allow network-inbound (local unix-socket (subpath (param "SOCKETS"))))
     (allow sysctl-read)
+    ;; No information about any other process: `deny default` alone leaves
+    ;; proc_pidinfo and proc_pidpath on this user's processes allowed.
+    (deny process-info*)
     (allow process-info* (target self))
     (allow signal (target self))
     (allow mach-lookup

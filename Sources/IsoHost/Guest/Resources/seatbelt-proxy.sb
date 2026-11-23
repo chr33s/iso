@@ -57,6 +57,9 @@
 ;; Baseline a networked binary needs to start under (deny default).
 (allow sysctl-read)
 (allow system-socket)
+;; No information about any other process: `deny default` alone leaves
+;; proc_pidinfo and proc_pidpath on this user's processes allowed.
+(deny process-info*)
 (allow process-info* (target self))
 (allow mach-lookup
   (global-name "com.apple.mDNSResponder")

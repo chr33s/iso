@@ -96,6 +96,26 @@ private let session = InferenceSession(sessionID: "s", epoch: "e", services: [])
   #expect(!SeatbeltProfile.inferenceWorker(backendPorts: []).contains("remote ip"))
 }
 
+/// Every Seatbelt profile iso applies denies other processes' information
+/// explicitly: `deny default` alone leaves this user's processes readable.
+@Test func everyProfileDeniesOtherProcessesInformation() {
+  for (name, profile) in [
+    ("proxy", SeatbeltProfile.proxy), ("egress", SeatbeltProfile.egress),
+    ("tar receiver", SeatbeltProfile.tarReceiver),
+    ("broker", SeatbeltProfile.inference),
+    ("worker", SeatbeltProfile.inferenceWorker(backendPorts: [18080])),
+    ("backend", EmbeddedInference.backendProfile),
+  ] {
+    let deny = profile.range(of: "(deny process-info*)")
+    let allow = profile.range(of: "(allow process-info* (target self))")
+    #expect(deny != nil && allow != nil, "\(name)")
+    if let deny, let allow {
+      #expect(deny.lowerBound < allow.lowerBound, "\(name): the deny comes first")
+    }
+    #expect(!profile.contains("(allow process-info-pidinfo)"), "\(name)")
+  }
+}
+
 @Test func requiredModeWithholdsEveryProviderCredential() throws {
   let guest = try FakeGuest()
   defer { guest.remove() }

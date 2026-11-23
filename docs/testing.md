@@ -998,7 +998,7 @@ that removing the exact trustd permission breaks system verification. It does no
 replace credentialed provider/agent smoke tests or broader memory measurements.
 `python3 scripts/test-swift-egress-jail.py` runs `iso-egress --jail-selftest`
 under `seatbelt-egress.sb` and checks write, exec, non-443, loopback-443,
-loopback-53 and home-read denial, then checks that the unconfined companion
+loopback-53, home-read and other-process-information denial, then checks that the unconfined companion
 refuses to start without reading its startup input from stdin. It does not open a public
 connection or boot a VM.
 

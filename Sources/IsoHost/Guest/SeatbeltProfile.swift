@@ -67,6 +67,9 @@ enum SeatbeltProfile {
     ;; Baseline a networked binary needs to start under (deny default).
     (allow sysctl-read)
     (allow system-socket)
+    ;; No information about any other process: `deny default` alone leaves
+    ;; proc_pidinfo and proc_pidpath on this user's processes allowed.
+    (deny process-info*)
     (allow process-info* (target self))
     (allow mach-lookup
       (global-name "com.apple.mDNSResponder")
@@ -125,6 +128,9 @@ enum SeatbeltProfile {
     (allow file-read-metadata (literal "/etc") (literal "/var"))
     (allow sysctl-read)
     (allow system-socket)
+    ;; No information about any other process: `deny default` alone leaves
+    ;; proc_pidinfo and proc_pidpath on this user's processes allowed.
+    (deny process-info*)
     (allow process-info* (target self))
     (allow mach-lookup
       (global-name "com.apple.mDNSResponder")
@@ -166,6 +172,9 @@ extension SeatbeltProfile {
     (allow file-read-metadata (literal "/etc") (literal "/var") (literal "/tmp"))
     (allow file-read* file-write* (subpath (param "TREE")))
     (allow sysctl-read)
+    ;; No information about any other process: `deny default` alone leaves
+    ;; proc_pidinfo and proc_pidpath on this user's processes allowed.
+    (deny process-info*)
     (allow process-info* (target self))
     (allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))
     """# + "\n"
