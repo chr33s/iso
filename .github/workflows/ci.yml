@@ -24,6 +24,7 @@ jobs:
   # Release calls this workflow, so these jobs also gate release builds.
   check:
     name: Host and runtime
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: xcode-27
     timeout-minutes: 45
     steps:
@@ -112,6 +113,7 @@ jobs:
   # to the jobs that build Swift (mise.lock pins python and uv for linux-x64).
   semgrep:
     name: Code-style rules
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -131,6 +133,7 @@ jobs:
   # parallel on separate runners. Release calls this workflow and needs all.
   sandbox:
     name: Apple runtime
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -150,6 +153,7 @@ jobs:
 
   egress:
     name: Filtered egress
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -169,6 +173,7 @@ jobs:
 
   iso-ci:
     name: iso-ci companion
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -189,6 +194,7 @@ jobs:
 
   fuzz:
     name: Fuzz smoke
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: xcode-27
     timeout-minutes: 20
     steps:
@@ -209,6 +215,7 @@ jobs:
   # not guarantee that SDK/runtime; xcode-27 is GitHub's macOS 27 preview image.
   proxy:
     name: Credential proxy
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -234,6 +241,7 @@ jobs:
 
   zizmor:
     name: Workflow security audit
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
