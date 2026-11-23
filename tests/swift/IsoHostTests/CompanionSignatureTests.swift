@@ -81,8 +81,13 @@ import Testing
 /// the companion or on any directory above it.
 @Test func companionsUnderAnACLWriteGrantAreRefused() throws {
   let root = try scratchDirectory("companion-acl")
-  defer { try? FileManager.default.removeItem(atPath: root) }
   let signed = root + "/iso-proxy"
+  // The last step leaves a deny-delete entry on `root`, which would make
+  // removing it fail and leak the directory.
+  defer {
+    try? setACL(root, nil)
+    try? FileManager.default.removeItem(atPath: root)
+  }
   try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: signed)
   chmod(signed, 0o755)
   _ = try CompanionSignature.verify(signed, signer: .adHoc)
