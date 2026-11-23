@@ -47,9 +47,16 @@ package struct BackendVerification: Sendable, Equatable {
   package init() {}
 
   /// Run-as, authentication and confinement all verified.
-  package var isolationVerified: Bool {
-    runAs.passed == true && authenticated == true && confined == true
-      && (!managed || challenged == true)
+  package var isolationVerified: Bool { unverified.isEmpty }
+
+  /// The isolation properties not verified, for diagnostics.
+  package var unverified: [String] {
+    var missing: [String] = []
+    if runAs.passed != true { missing.append("its account (run_as)") }
+    if authenticated != true { missing.append("its token check") }
+    if managed && challenged != true { missing.append("its identity (the token challenge)") }
+    if confined != true { missing.append("its sandbox") }
+    return missing
   }
 
   package var json: OutputJSON {
@@ -123,7 +130,18 @@ package enum BackendChecks {
       throw HostError(
         "INFERENCE_BACKEND_UNSAFE_OWNER: backend '\(name)' must run as \(account): \(reason)")
     }
-    guard let managed = backend.managed else { return }
+    if let managed = backend.managed { try requireManaged(name, backend, managed, result) }
+    guard backend.isolation == .unverified || result.isolationVerified else {
+      throw HostError(
+        "INFERENCE_BACKEND_UNVERIFIED: iso could not verify \(result.unverified.joined(separator: ", ")) for backend '\(name)'; use a managed backend under Seatbelt (`iso inference init`), or set \"isolation\": \"unverified\" to accept it in the trusted computing base"
+      )
+    }
+  }
+
+  static func requireManaged(
+    _ name: String, _ backend: InferenceBackendConfig, _ managed: ManagedBackendConfig,
+    _ result: BackendVerification
+  ) throws {
     guard result.authenticated == true else {
       throw HostError(
         "INFERENCE_BACKEND_UNSAFE_OWNER: managed backend '\(name)' answers without its token; run `iso inference provision \(name)` again"

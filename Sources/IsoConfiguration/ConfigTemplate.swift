@@ -123,7 +123,9 @@ package enum ConfigTemplate {
       //     "main": {
       //       "base_url": "http://127.0.0.1:8080",
       //       "protocol": "anthropic-messages",
-      //       "qualification_profile": "reviewed"
+      //       "qualification_profile": "reviewed",
+      //       // A server you run is not verified isolated; `managed` is.
+      //       "isolation": "unverified"
       //     }
       //   },
       //   "services": {

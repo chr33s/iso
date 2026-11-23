@@ -53,11 +53,30 @@ SPDX-License-Identifier: Apache-2.0
   connections at once, refused for brokered sandboxes), and `inspect`
   reports it. iso requires protocol 6. In the guest, a systemd socket on
   `127.0.0.1:11788` bridges to the relayed socket.
-- **Gateway control protocol 3:** `register_session` declares the session's
+- **Gateway control protocol 4:** `register_session` declares the session's
   transport kind. `owner` (vmnet) activates bound to the registered sandbox
   owner; `forward` (brokered) activates bound to a live `/usr/bin/ssh` of the
   same user at the declared start time, while the owner still runs, and is
-  revoked when either exits. Version 2 requests are refused.
+  revoked when either exits. Each grant's backend names its front end:
+  `launcher` (a managed backend) or `plain`. Earlier versions are refused.
+- **Managed backends prove every connection.** Before it sends the token or
+  a prompt on a connection to a managed backend, the gateway asks the
+  launcher's challenge on that connection and checks the answer. A process
+  that took the port while the job restarted gets neither; the request fails
+  with `INFERENCE_BACKEND_UNAVAILABLE` and the backend is not quarantined.
+  Each request names its session, and the launcher keys mlx-lm's prompt
+  cache by it and serves requests one at a time, so one VM's prompt never
+  seeds another VM's cache or its `cached_tokens`.
+- **`backends.<name>.isolation`** (`"verified"` by default): a session
+  starts only on a backend whose account, token check, identity and sandbox
+  iso verified, which only a managed backend under Seatbelt passes. An
+  attached server, or a managed one with `confinement: "none"`, needs
+  `"isolation": "unverified"`; otherwise it fails with
+  `INFERENCE_BACKEND_UNVERIFIED`, and `doctor` reports it.
+- **Provisioning writes the backend token last:** `iso inference provision`
+  removes any earlier token before `install` and a model fetch run
+  downloaded code as the role account with network access, and writes the
+  new one after them.
 - **Release archives** carry `iso-inference`.
 
 ### Changed

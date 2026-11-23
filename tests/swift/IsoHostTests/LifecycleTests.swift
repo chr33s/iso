@@ -188,7 +188,7 @@ struct FakeInstallation {
 /// start. The unguarded configuration refuses the relayed boot.
 @Test func requiredInferenceRelaysTheGatewaySocketThroughEveryGate() throws {
   let required =
-    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
   let install = try FakeInstallation()
   defer { install.remove() }
   try install.backend.setup(
@@ -234,7 +234,7 @@ struct FakeInstallation {
 /// A new instance under `required` is created with the relay.
 @Test func requiredInferenceCreatesTheSandboxWithTheRelay() throws {
   let required =
-    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
   let install = try FakeInstallation(extra: required)
   defer { install.remove() }
   try install.backend.setup(
@@ -1310,7 +1310,7 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
 @Test func requiredInferenceRefusesMacOSGuests() throws {
   let required = try FakeInstallation(
     extra:
-      #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+      #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
   )
   defer { required.remove() }
   let error = try #require(throws: HostError.self) {

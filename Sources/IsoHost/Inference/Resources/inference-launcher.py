@@ -8,8 +8,13 @@ Runs `mlx_lm.server` bound to 127.0.0.1 with a request handler that requires
 header and serves no CORS. `GET /iso/challenge/<64 hex>` answers, without
 authentication, the hex HMAC-SHA256 of that nonce under the token, so iso
 can tell its own job from another process on the port without sending the
-token. It passes no adapter, draft-model or remote-code
-option, pins every model load to --model, and caps MLX memory. It refuses
+token. Asked with `Connection: keep-alive`, it keeps the connection open, so
+the gateway can prove each connection before it sends the token and a
+prompt on it. It passes no adapter, draft-model or remote-code
+option, pins every model load to --model, and caps MLX memory. It keys the
+prompt cache by the session the gateway names (`X-Iso-Cache-Partition`), so
+one VM's prompts never seed another's cache or its reported cached tokens,
+and serves requests one at a time for that. It refuses
 mlx-lm versions it was not qualified with. Installed root-owned by `iso inference provision`; run by launchd as the
 role account.
 """
@@ -20,9 +25,20 @@ import hmac
 import os
 import re
 import sys
+import threading
 
 QUALIFIED = ("0.31.",)
 CHALLENGE = re.compile(r"^/iso/challenge/([0-9a-f]{64})$")
+PARTITION_HEADER = "X-Iso-Cache-Partition"
+PARTITION = re.compile(r"^[0-9a-f]{32}$")
+# The partition of the request this thread is serving: set by the HTTP
+# handler thread around a request, and by the generator thread around one
+# generation.
+_partition = threading.local()
+
+
+def current_partition():
+    return getattr(_partition, "value", None)
 
 
 def parse():
@@ -72,19 +88,28 @@ def authenticating(handler_class, token):
         def do_POST(self):
             if not self._authorized():
                 return self._refuse()
-            return super().do_POST()
+            partitions = self.headers.get_all(PARTITION_HEADER) or []
+            if len(partitions) > 1 or (partitions and not PARTITION.match(partitions[0])):
+                return self._refuse()
+            _partition.value = partitions[0] if partitions else None
+            try:
+                return super().do_POST()
+            finally:
+                _partition.value = None
 
         def _challenge(self, nonce):
             if self.headers.get("Origin") is not None:
                 return self._refuse()
+            keep = (self.headers.get("Connection") or "").strip().lower() == "keep-alive"
             body = hmac.new(token, nonce.encode(), hashlib.sha256).hexdigest().encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
+            self.send_header("Connection", "keep-alive" if keep else "close")
             self.end_headers()
             self.wfile.write(body)
-            self.close_connection = True
+            # The next request on this connection still needs the token.
+            self.close_connection = not keep
 
         def do_GET(self):
             challenge = CHALLENGE.match(self.path)
@@ -102,6 +127,46 @@ def authenticating(handler_class, token):
             pass
 
     return Authenticated
+
+
+def partition_prompt_cache(server):
+    """Key every prompt-cache lookup and insertion by the request's session.
+
+    mlx-lm shares one prompt cache across all requests, keyed by model and
+    token prefix, so a later request would reuse (and report as cached) the
+    prefix of another session's prompt. The cache key here also carries the
+    partition the gateway named. A batch can mix sessions whose entries are
+    inserted later on the generator thread, so requests are served one at a
+    time, each with its partition set around its own lookup and insertion.
+    """
+
+    class PartitionedPromptCache(server.LRUPromptCache):
+        def fetch_nearest_cache(self, model, tokens):
+            return super().fetch_nearest_cache((model, current_partition()), tokens)
+
+        def insert_cache(self, model, tokens, prompt_cache, **kwargs):
+            return super().insert_cache((model, current_partition()), tokens, prompt_cache, **kwargs)
+
+    server.LRUPromptCache = PartitionedPromptCache
+    generator = server.ResponseGenerator
+    generate = generator.generate
+    serve_single = generator._serve_single
+
+    def tagged_generate(self, request, *args, **kwargs):
+        # On the HTTP handler thread: carry its partition to the generator.
+        request._iso_partition = current_partition()
+        return generate(self, request, *args, **kwargs)
+
+    def partitioned_serve_single(self, item):
+        _partition.value = getattr(item[1], "_iso_partition", None)
+        try:
+            return serve_single(self, item)
+        finally:
+            _partition.value = None
+
+    generator.generate = tagged_generate
+    generator._serve_single = partitioned_serve_single
+    generator._is_batchable = lambda self, args: False
 
 
 def main():
@@ -132,6 +197,7 @@ def main():
         return load(self, "default_model", None, "default_model")
 
     server.ModelProvider.load = pinned_load
+    partition_prompt_cache(server)
 
     original = server._run_http_server
 

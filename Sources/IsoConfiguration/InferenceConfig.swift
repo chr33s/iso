@@ -111,6 +111,18 @@ package struct QualificationProfileConfig: Sendable, Equatable {
   package let tokenCounter: TokenCounterMode
 }
 
+/// Whether iso must verify a backend's isolation before a session uses it
+/// (spec §10, §20).
+package enum BackendIsolation: String, Sendable, Equatable, CaseIterable {
+  /// The default: the backend runs as another account, refuses requests
+  /// without its token, proves it is the listener and is sandboxed. Only a
+  /// managed backend under Seatbelt can pass.
+  case verified
+  /// The owner accepts a backend iso cannot verify (an attached server, or
+  /// a managed one with `confinement: "none"`) in the trusted computing base.
+  case unverified
+}
+
 package struct InferenceBackendConfig: Sendable, Equatable {
   /// How the backend is run: attached by the owner, or provisioned by iso.
   package enum Operation: Sendable, Equatable {
@@ -128,16 +140,18 @@ package struct InferenceBackendConfig: Sendable, Equatable {
   package let profile: String
   package let maxActiveRequests: Int
   package let operation: Operation
+  package let isolation: BackendIsolation
 
   package init(
     port: UInt16, backendProtocol: InferenceProtocol, profile: String, maxActiveRequests: Int,
-    operation: Operation
+    operation: Operation, isolation: BackendIsolation = .verified
   ) {
     self.port = port
     self.backendProtocol = backendProtocol
     self.profile = profile
     self.maxActiveRequests = maxActiveRequests
     self.operation = operation
+    self.isolation = isolation
   }
 
   package var baseURL: String { "http://127.0.0.1:\(port)" }

@@ -532,6 +532,7 @@ and model. The gateway enforces it; iso does not verify it.
 | `credential` | string | unset | A `cmd:` or `vault:NAME` reference, resolved on the host and sent to the backend as a bearer token. Never guest-visible. Not allowed with `managed` (iso generates and stores the token). |
 | `run_as` | string | unset | The account the backend must run as. When set, a start fails with `INFERENCE_BACKEND_UNSAFE_OWNER` unless the account exists, differs from yours and you own no listener on the port (including when that cannot be checked). Managed backends always use `_isoinference`. |
 | `managed` | object | unset | Let iso install and run the backend (below). |
+| `isolation` | string | `"verified"` | `"verified"` starts a session only when iso verified the backend's account, token check, identity and sandbox, which only a `managed` backend under Seatbelt passes; anything else fails with `INFERENCE_BACKEND_UNVERIFIED`. `"unverified"` accepts an attached server, or a managed one with `confinement: "none"`, in the trusted computing base (`doctor` warns). |
 
 **`backends.<name>.managed`**: an mlx-lm server that `iso inference provision`
 installs as a LaunchDaemon under the `_isoinference` role account, with a
@@ -541,10 +542,10 @@ generated bearer token, root-owned code and weights, and a Seatbelt profile.
 |-------|------|---------|-------------|
 | `server` | string | required | `"mlx-lm"`. |
 | `python` | string | one of | Absolute path of an interpreter that imports `mlx_lm` 0.31.x. Its executable, `sys.prefix` and `sys.base_prefix` trees must be root-owned and not group- or world-writable (so not a Homebrew or user-installed Python); `provision` checks this before running it. |
-| `install` | string | one of | Install this mlx-lm version (0.31.x) into a root-owned virtualenv instead. `provision` downloads the packages as the role account, in a staging directory, with binary wheels only, then makes the tree root-owned. Uses the network. |
+| `install` | string | one of | Install this mlx-lm version (0.31.x) into a root-owned virtualenv instead. `provision` downloads the packages as the role account, in a staging directory, with binary wheels only, then makes the tree root-owned. Uses the network. No backend token exists while the downloads run. |
 | `model` | string or object | required | An absolute model directory (copied in), or `{"repo": "OWNER/NAME", "revision": "<40-hex commit>"}` fetched by the role account during `provision`. |
 | `memory_limit` | byte count | unset | MLX memory ceiling (1 GiB–4 TiB). |
-| `confinement` | string | `"seatbelt"` | `"seatbelt"` or `"none"`. `none` is reported as unconfined in status, and the backend still has to run as the role account and require its token. |
+| `confinement` | string | `"seatbelt"` | `"seatbelt"` or `"none"`. `none` is reported as unconfined in status, needs the backend's `"isolation": "unverified"`, and the backend still has to run as the role account and require its token. |
 
 A managed backend's name becomes its launchd label and directory, so it may
 not start with `.`. `iso inference init` writes this configuration with

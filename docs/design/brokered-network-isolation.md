@@ -529,7 +529,7 @@ root can stop it, which makes SSH unavailable and nothing else.
   host path) and no raw model tunnel. Existing TCP local-service encodings and
   digests are unchanged. `ProxyLauncher` starts one static
   `-R 127.0.0.1:11788:<session socket>` forward after the guest is configured.
-  The gateway (control protocol 3, kind `forward`) binds the session to that
+  The gateway (control protocol 3 and later, kind `forward`) binds the session to that
   `ssh` process (always `/usr/bin/ssh`) and to the sandbox owner, and every
   revocation closes the forward first. The forward holds at most 32 guest
   connections, and its death revokes the instance until it restarts. The runtime is never asked for its relay on a brokered

@@ -151,7 +151,7 @@ private let session = InferenceSession(
       "qualification_profiles": {"p": {"protocol": "anthropic-messages", "completion_evidence": "drain",
         "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
         "max_input_bytes": 1024}},
-      "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "anthropic-messages",
+      "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:18080", "protocol": "anthropic-messages",
         "qualification_profile": "p"}},
       "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["anthropic-messages"],
         "max_context_tokens": 1000}}
@@ -182,6 +182,8 @@ private let session = InferenceSession(
   #expect(rendered.contains(#""credential":"backend-secret""#))
   #expect(rendered.contains(#""upstream_model":"mlx/claude-ish""#))
   #expect(rendered.contains(#""completion_evidence":"drain""#))
+  #expect(rendered.contains(#""front":"plain""#))
+  #expect(!rendered.contains(#""front":"launcher""#))
   let fingerprint = try control.registrationFingerprint(services)
   // The fingerprint never covers credentials, and tracks policy changes.
   let changed = try guardedConfig(evidence: "stream-close")
@@ -189,6 +191,33 @@ private let session = InferenceSession(
     try controller(changed, guest: guest, state: guest.root + "/i2").registrationFingerprint(
       services) != fingerprint)
   #expect(!fingerprint.contains("backend-secret"))
+}
+
+/// A managed backend is iso's launcher: the gateway challenges each
+/// connection to it and names the session's cache partition (spec §20.3).
+@Test func aManagedBackendIsALauncherFrontEnd() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let config = try testConfig(
+    #"""
+    "inference": {
+      "mode": "required",
+      "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain",
+        "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+        "max_input_bytes": 1024}},
+      "backends": {"m": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
+        "qualification_profile": "p",
+        "managed": {"server": "mlx-lm", "python": "/opt/py/bin/python3", "model": "/models/m"}}},
+      "services": {"s": {"backend": "m", "upstream_model": "default_model",
+        "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}
+    }
+    """#)
+  let control = controller(config, guest: guest, state: guest.root + "/inference")
+  let grant = control.grant(
+    try control.resolved(try InferenceServiceName("s")), credential: "token")
+  let rendered = grant.compactRendered()
+  #expect(rendered.contains(#""front":"launcher""#))
+  #expect(rendered.contains(#""credential":"token""#))
 }
 
 @Test func attachGrantRoundTrips() throws {

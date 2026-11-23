@@ -21,9 +21,25 @@ final class FakeBackend: Sendable {
     case close
   }
 
+  /// How the backend answers the managed launcher's challenge (§20.3).
+  enum Challenge: Sendable {
+    /// The token's HMAC of the nonce, keeping the connection open.
+    case answer(token: String)
+    /// Some other 64 hex digits: a squatter guessing.
+    case wrong
+    /// 401, as a server without the launcher would.
+    case unauthorized
+    /// Close without answering.
+    case close
+    /// Never answer.
+    case silent
+  }
+
   struct Recorded: Sendable {
     let head: String
     let body: [UInt8]
+    /// Which accepted connection carried it (counted from 1).
+    var connection = 0
     var json: JSON? {
       try? JSONParser.parse(body, limits: .init(maxBytes: 1 << 24, maxDepth: 64))
     }
@@ -32,13 +48,19 @@ final class FakeBackend: Sendable {
   let port: UInt16
   private let fd: Int32
   private let script: Mutex<Script>
+  private let challenge: Challenge?
   private let recorded = Mutex<[Recorded]>([])
+  private let challenges = Mutex<[Recorded]>([])
+  private let accepted = Mutex(0)
+  /// Every byte received, on every connection.
+  private let received = Mutex<[UInt8]>([])
   private let finished = Mutex(0)
   private let hangsEnded = Mutex(0)
   private let closed = Mutex(false)
 
-  init(_ script: Script) throws {
+  init(_ script: Script, challenge: Challenge? = nil) throws {
     self.script = Mutex(script)
+    self.challenge = challenge
     let listener = socket(AF_INET, SOCK_STREAM, 0)
     var address = sockaddr_in()
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -60,7 +82,11 @@ final class FakeBackend: Sendable {
       while true {
         let connection = accept(listener, nil, nil)
         guard connection >= 0, let self else { return }
-        Thread { self.serve(connection) }.start()
+        let number = self.accepted.withLock {
+          $0 += 1
+          return $0
+        }
+        Thread { self.serve(connection, number: number) }.start()
       }
     }.start()
   }
@@ -72,36 +98,88 @@ final class FakeBackend: Sendable {
 
   func setScript(_ new: Script) { script.withLock { $0 = new } }
   var requests: [Recorded] { recorded.withLock { $0 } }
+  /// Challenge requests (`GET /iso/challenge/…`), in arrival order.
+  var challengeRequests: [Recorded] { challenges.withLock { $0 } }
+  var receivedBytes: [UInt8] { received.withLock { $0 } }
   /// Connections whose script ran to completion (the backend "finished").
   var completed: Int { finished.withLock { $0 } }
   /// `streamThenHang` connections the gateway closed.
   var closedWhileHanging: Int { hangsEnded.withLock { $0 } }
 
-  private func serve(_ connection: Int32) {
-    defer { close(connection) }
-    var one: Int32 = 1
-    setsockopt(connection, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-    var buffer: [UInt8] = []
-    var headEnd: Int?
+  /// One Content-Length framed request from `buffer` and the connection.
+  private func readRequest(_ connection: Int32, _ buffer: inout [UInt8]) -> Recorded? {
+    var headEnd = findHeadEnd(buffer)
     while headEnd == nil {
-      var chunk = [UInt8](repeating: 0, count: 4096)
-      let count = recv(connection, &chunk, chunk.count, 0)
-      guard count > 0 else { return }
-      buffer += chunk.prefix(count)
-      if let range = findHeadEnd(buffer) { headEnd = range }
+      guard let chunk = receive(connection, 4096) else { return nil }
+      buffer += chunk
+      headEnd = findHeadEnd(buffer)
     }
     let head = String(decoding: buffer.prefix(headEnd!), as: UTF8.self)
     let length =
       head.split(separator: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }
       .flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
-    var body = Array(buffer.dropFirst(headEnd! + 4))
-    while body.count < length {
-      var chunk = [UInt8](repeating: 0, count: 65536)
-      let count = recv(connection, &chunk, chunk.count, 0)
-      guard count > 0 else { return }
-      body += chunk.prefix(count)
+    buffer.removeFirst(headEnd! + 4)
+    while buffer.count < length {
+      guard let chunk = receive(connection, 65536) else { return nil }
+      buffer += chunk
     }
-    recorded.withLock { $0.append(Recorded(head: head, body: body)) }
+    let body = Array(buffer.prefix(length))
+    buffer.removeFirst(length)
+    return Recorded(head: head, body: body)
+  }
+
+  private func receive(_ connection: Int32, _ size: Int) -> [UInt8]? {
+    var chunk = [UInt8](repeating: 0, count: size)
+    let count = recv(connection, &chunk, chunk.count, 0)
+    guard count > 0 else { return nil }
+    let bytes = Array(chunk.prefix(count))
+    received.withLock { $0 += bytes }
+    return bytes
+  }
+
+  /// Answers a challenge; true when the connection stays open for a request.
+  private func answer(_ connection: Int32, _ request: Recorded) -> Bool {
+    let nonce = String(request.head.split(separator: " ")[1].dropFirst("/iso/challenge/".count))
+    let body: String
+    switch challenge {
+    case .answer(let token):
+      body = LauncherChallenge.answer(token: token, nonce: nonce)
+    case .wrong:
+      body = String(repeating: "0", count: 64)
+    case .unauthorized:
+      _ = send(connection, "HTTP/1.1 401 X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+      return false
+    case .close, .none:
+      return false
+    case .silent:
+      var byte: UInt8 = 0
+      while recv(connection, &byte, 1, 0) > 0 {}
+      return false
+    }
+    return send(
+      connection,
+      "HTTP/1.0 200 OK\r\ncontent-type: text/plain\r\ncontent-length: \(body.utf8.count)\r\nconnection: keep-alive\r\n\r\n\(body)"
+    )
+  }
+
+  private func serve(_ connection: Int32, number: Int) {
+    defer { close(connection) }
+    var one: Int32 = 1
+    setsockopt(connection, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+    var buffer: [UInt8] = []
+    guard var request = readRequest(connection, &buffer) else { return }
+    request.connection = number
+    if request.head.hasPrefix("GET /iso/challenge/") {
+      challenges.withLock { $0.append(request) }
+      guard answer(connection, request), var next = readRequest(connection, &buffer) else {
+        return
+      }
+      next.connection = number
+      request = next
+    }
+    let head = request.head
+    let body = request.body
+    recorded.withLock { $0.append(Recorded(head: head, body: body, connection: number)) }
     let current = script.withLock { $0 }
     switch current {
     case .stream(let events, let pause):
@@ -413,7 +491,8 @@ final class Harness: @unchecked Sendable {
 
 func grant(
   _ backendProtocol: BackendProtocol, port: UInt16, apis: Set<FrontendAPI>? = nil,
-  evidence: CompletionEvidence = .drain, maxActive: Int = 1, alias: String = "local-coder"
+  evidence: CompletionEvidence = .drain, maxActive: Int = 1, alias: String = "local-coder",
+  credential: String? = nil, front: BackendFront = .plain
 ) -> ServiceGrant {
   let api: FrontendAPI =
     switch backendProtocol {
@@ -430,7 +509,7 @@ func grant(
         streamCloseDrainMilliseconds: 100, contextOverflow: .reject, overheadPerRequestBytes: 64,
         overheadPerMessageBytes: 8, maxInputBytes: 1 << 20, maxRequestBodyBytes: 4 << 20,
         tokenCounter: .none),
-      credential: nil),
+      credential: credential.map(Secret.init), front: front),
     upstreamModel: "real/model", apis: apis ?? [api], maxContextTokens: 32_768,
     defaultOutputTokens: 256, maxOutputTokens: 1_024, maxInputBytes: nil)
 }

@@ -161,7 +161,7 @@ extension ConfigDecoder {
     let r = try ObjectReader(value, at: path)
     try r.rejectUnknown(allowing: [
       "base_url", "protocol", "qualification_profile", "max_active_requests", "credential",
-      "run_as", "managed",
+      "run_as", "managed", "isolation",
     ])
     let url = try r.required("base_url", Parse.string)
     guard let port = loopbackPort(url) else {
@@ -208,7 +208,10 @@ extension ConfigDecoder {
       },
       profile: try r.required("qualification_profile", Parse.string),
       maxActiveRequests: try r.defaulted("max_active_requests", 1, bounded(1...64)),
-      operation: operation)
+      operation: operation,
+      isolation: try r.defaulted("isolation", .verified) { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, BackendIsolation.allCases)
+      })
   }
 
   static func managedBackend(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)

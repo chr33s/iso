@@ -130,7 +130,7 @@ package struct InferenceController: Sendable {
   package static let guestPort: UInt16 = 11788
   /// The gateway control protocol this host speaks (IsoInferenceCore's
   /// `ControlProtocol.version`).
-  static let controlVersion: UInt64 = 3
+  static let controlVersion: UInt64 = 4
   static let controlTimeoutSeconds = 15
   static let startTimeout: Duration = .seconds(5)
 
@@ -693,6 +693,8 @@ package struct InferenceController: Sendable {
     var backend: [(String, OutputJSON)] = [
       ("port", .uint(UInt64(service.backend.port))), ("name", .string(service.backendName)),
       ("max_active", .uint(UInt64(service.backend.maxActiveRequests))),
+      // iso's launcher proves itself on every connection (spec §20.3).
+      ("front", .string(service.backend.managed == nil ? "plain" : "launcher")),
       (
         "profile",
         .object([

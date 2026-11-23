@@ -339,6 +339,20 @@ struct InferenceDoctor: ParsableCommand {
               host.confined.map { $0 ? "sandboxed (kernel-reported)" : "not sandboxed" }
                 ?? "could not be determined"))
         }
+        let unverified = host.unverified.joined(separator: ", ")
+        checks.append(
+          host.isolationVerified
+            ? Check(
+              "backend \(name) isolation", .ok,
+              "verified: its account, token check, identity and sandbox")
+            : backend.isolation == .unverified
+              ? Check(
+                "backend \(name) isolation", .warn,
+                "accepted unverified (\"isolation\": \"unverified\"): \(unverified) not verified")
+              : Check(
+                "backend \(name) isolation", .fail,
+                "INFERENCE_BACKEND_UNVERIFIED: \(unverified) not verified, so sessions will not start; use a managed backend or set \"isolation\": \"unverified\""
+              ))
         if let profile = inference.profiles[backend.profile] {
           checks.append(
             Check(

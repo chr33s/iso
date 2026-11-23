@@ -8,7 +8,9 @@ package enum ControlProtocol {
   /// 2: sessions are Unix sockets named by the registration (`socket`), not
   /// TCP ports (§22). 3: a registration declares its transport kind
   /// (`owner` or `forward`), which fixes the process activation may bind.
-  package static let version: Int64 = 3
+  /// 4: each grant's backend names its front end (`front`), which fixes
+  /// whether connections are challenged (§20.3).
+  package static let version: Int64 = 4
   package static let maxFrameBytes = 256 << 10
 
   package enum Request: Sendable {
@@ -285,6 +287,7 @@ package enum ControlProtocol {
     var backend = JSONObject([
       "port": .int(Int64(grant.backend.id.port)), "name": .string(grant.backend.name),
       "max_active": .int(Int64(grant.backend.maxActive)),
+      "front": .string(grant.backend.front.rawValue),
       "profile": .object(
         JSONObject([
           "name": .string(profile.name), "protocol": .string(profile.backendProtocol.rawValue),
@@ -319,7 +322,7 @@ package enum ControlProtocol {
       "max_output_tokens", "max_input_bytes", "backend",
     ])
     let b = try r.object("backend")
-    try b.only(["port", "name", "max_active", "profile", "credential"])
+    try b.only(["port", "name", "max_active", "front", "profile", "credential"])
     let p = try b.object("profile")
     try p.only([
       "name", "protocol", "completion_evidence", "stream_close_drain_ms", "context_overflow",
@@ -371,11 +374,17 @@ package enum ControlProtocol {
       "max_output_tokens", 1...min(SessionLimits.generatedTokensPerMinute, maxContext))
     let defaultOutput = try r.bounded("default_output_tokens", 1...maxOutput)
     let credential = try b.optionalString("credential", maxBytes: 4096).map(Secret.init)
+    let front = try b.enumeration("front", BackendFront.self)
+    // The launcher's proof is keyed by the backend's token (§20.3).
+    if front == .launcher, credential == nil {
+      throw InferenceError(.requestInvalid, "a launcher backend needs its credential")
+    }
     return ServiceGrant(
       alias: alias,
       backend: BackendPolicy(
         id: BackendID(port: try b.port("port")), name: try b.string("name", maxBytes: 128),
-        maxActive: try b.bounded("max_active", 1...64), profile: profile, credential: credential),
+        maxActive: try b.bounded("max_active", 1...64), profile: profile, credential: credential,
+        front: front),
       upstreamModel: try r.string("upstream_model", maxBytes: 1024), apis: Set(apis),
       maxContextTokens: maxContext,
       defaultOutputTokens: defaultOutput, maxOutputTokens: maxOutput,

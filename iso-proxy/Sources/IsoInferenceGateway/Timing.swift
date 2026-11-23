@@ -7,6 +7,7 @@ package struct GatewayTiming: Sendable {
   package var bodyRead: Duration = .seconds(SessionLimits.bodyReadSeconds)
   package var queueWait: Duration = .seconds(SessionLimits.queueWaitSeconds)
   package var firstOutput: Duration = .seconds(SessionLimits.firstOutputSeconds)
+  package var backendProof: Duration = .seconds(SessionLimits.backendProofSeconds)
   package var generation: Duration = .seconds(SessionLimits.generationSeconds)
   package var cancellationGrace: Duration = .seconds(SessionLimits.cancellationGraceSeconds)
   package var keepAlive: Duration = .seconds(SessionLimits.keepAliveSeconds)

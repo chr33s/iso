@@ -2077,9 +2077,9 @@ if want inference; then
                                     responses: profile("openai-responses")},
            backends: {
              "fake-anthropic": {base_url: "http://127.0.0.1:\($pa)", protocol: "anthropic-messages",
-                                qualification_profile: "anthropic"},
+                                qualification_profile: "anthropic", isolation: "unverified"},
              "fake-responses": {base_url: "http://127.0.0.1:\($pr)", protocol: "openai-responses",
-                                qualification_profile: "responses"}},
+                                qualification_profile: "responses", isolation: "unverified"}},
            services: {
              "local-claude": {backend: "fake-anthropic", upstream_model: "fake/claude-upstream",
                               frontend_apis: ["anthropic-messages"], max_context_tokens: 200000},
@@ -2264,7 +2264,8 @@ while True:
              input_overhead: {per_request_bytes: 4096, per_message_bytes: 64},
              max_input_bytes: "2MiB"}},
            backends: {"fake-anthropic": {base_url: "http://127.0.0.1:\($pb)",
-             protocol: "anthropic-messages", qualification_profile: "anthropic"}},
+             protocol: "anthropic-messages", qualification_profile: "anthropic",
+             isolation: "unverified"}},
            services: {"local-claude": {backend: "fake-anthropic",
              upstream_model: "fake/claude-upstream", frontend_apis: ["anthropic-messages"],
              max_context_tokens: 200000}}},

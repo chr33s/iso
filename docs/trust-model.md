@@ -54,7 +54,7 @@ user launched it.
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint. Reached over the network; authenticated where applicable. |
 | iso-ci companion → GitHub Actions service | External | Scale-set pools only (`iso-ci/`, separately installed): the host-side controller exchanges a runner registration token for an Actions service admin token and holds a message-session token. Both stay in controller memory and go only to `https` hosts under `.actions.githubusercontent.com` (no redirects); guests receive only the JIT runner configuration. Each job is gated on GitHub's run record before acquisition (elastic scale sets) or on assignment (non-elastic, where a refused or unvetted assigned job stops all new runners). Only an elastic scale set with `min_runners: 0` may opt into public repositories (fork pull requests refused, write-gated events or named actors only). |
 | `iso-inference` gateway (host) | Trusted, confined | One per host user, under its own Seatbelt profile. It holds no cloud key, SSH key or runtime credential, only an optional local-backend credential. It parses untrusted guest HTTP (see [Guarded local inference](#guarded-local-inference)). |
-| Attached local model server | Trusted computing base, **not** confined by iso | A process the user started on host loopback. The gateway narrows what reaches it, but its own file, network and prompt-logging behavior is outside iso's control and reported as unverified. |
+| Attached local model server | Trusted computing base, **not** confined by iso | A process the user started on host loopback, used only when its backend sets `"isolation": "unverified"`. The gateway narrows what reaches it, but its own file, network and prompt-logging behavior is outside iso's control and reported as unverified. |
 | iso VM leases (`~/.iso/run/leases`) | Host-local | Written and `flock`-held by iso-sandbox VM owner processes; read by iso-ci to count CPU, memory and macOS VMs it does not own. Host-authored, never guest-authored; parsed strictly and bounded. |
 
 ## Secure defaults (DEF-01)
@@ -1104,10 +1104,22 @@ The gateway enforces an API boundary. It does not isolate the host.
   cache). Every download (`install`'s pip, binary wheels only, and a model
   `fetch`) runs as the role account in a staging directory; root takes the
   tree over (`lchown` first, then modes set without following links) before
-  anything runs from it. A configured `python` is checked to be root-owned
-  before root runs it. The launcher answers an unauthenticated
-  `GET /iso/challenge/<nonce>` with the HMAC of the nonce under the token, so
-  iso can tell its job from a squatter on the port without sending the token. The launcher binds 127.0.0.1, requires the bearer token,
+  anything runs from it. No token exists while those downloads run: root
+  removes any earlier token first and writes the new one after them, so
+  downloaded code running as the role account cannot read one. A configured
+  `python` is checked to be root-owned before root runs it. The launcher
+  answers an unauthenticated `GET /iso/challenge/<nonce>` with the HMAC of
+  the nonce under the token, so iso can tell its job from a squatter on the
+  port without sending the token. The gateway asks it on **every**
+  connection, with `Connection: keep-alive`, and writes the request (whose
+  headers carry the token) on that connection only after the answer matches.
+  A process that took the port while the job was down therefore receives
+  neither the token nor a prompt; the request fails with
+  `INFERENCE_BACKEND_UNAVAILABLE` and nothing is outstanding. Each request
+  names its session (`X-Iso-Cache-Partition`), and the launcher keys
+  mlx-lm's prompt cache by it and serves requests one at a time, so one VM's
+  prompt never seeds another's cache or its reported cached tokens. The
+  launcher binds 127.0.0.1, requires the bearer token,
   refuses browser `Origin` requests and pins the model. The host copy of the
   token lives in the Keychain (`iso-inference-backend`); like `iso proxy
   setup`, `security add-generic-password -w` briefly puts it on argv. Before
@@ -1115,19 +1127,33 @@ The gateway enforces an API boundary. It does not isolate the host.
   request gets 401, that the listener answers the challenge and, with
   Seatbelt, that the kernel reports the job sandboxed; a check that cannot be
   completed fails (`INFERENCE_BACKEND_UNSAFE_OWNER`).
+- **Unverified backends are opt-in.** A session starts only on a backend
+  whose account, token check, identity and sandbox iso verified, which only a
+  managed backend under Seatbelt can pass. An attached server, or a managed
+  one with `confinement: "none"`, is refused (`INFERENCE_BACKEND_UNVERIFIED`)
+  unless its backend sets `"isolation": "unverified"`, which `doctor` reports
+  as a warning.
 
 **Accepted limitations:**
 
-- An attached (unmanaged) model server stays in the trusted computing base,
-  and iso does not confine it. Its behavior is reported as unverified
-  (`backend_isolation_verified: false`). A hung server is never killed; the
-  gateway quarantines it instead.
+- An attached (unmanaged) model server, accepted with `"isolation":
+  "unverified"`, stays in the trusted computing base, and iso does not
+  confine it. Its behavior is reported as unverified
+  (`backend_isolation_verified: false`). The gateway sends its credential to
+  whatever listens on its port, without the managed launcher's per-connection
+  proof, and its prompt cache is the server's own. A hung server is never
+  killed; the gateway quarantines it instead.
+- Sessions on one managed backend still share its memory, queue and GPU, so
+  one VM's load is visible to another as latency, and cache evictions are
+  global. The partitioned cache removes reuse of another session's prompt,
+  not timing.
 - A managed backend is still in the trusted computing base for the prompts it
   receives. Its profile allows the Metal and IOKit services MLX needs.
 - `install` pins `mlx-lm` but not its dependencies, and no hashes: it trusts
   the binary wheels PyPI serves at provisioning time. They are fetched and
   unpacked as the role account, never as root, and become root-owned before
-  they run. A configured, already root-owned `python` avoids the download.
+  they run, and no backend token exists while that code can run. A
+  configured, already root-owned `python` avoids the download.
 - Another account on the Mac can reach loopback listeners. iso can list only
   your own listeners, so `doctor` notes but cannot enumerate other accounts'.
 - `egress` is unchanged by inference: on vmnet a guest can still reach other

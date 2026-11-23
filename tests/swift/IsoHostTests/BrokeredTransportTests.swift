@@ -623,7 +623,7 @@ private func requiredInference(egress: String = "none") throws -> IsoConfig {
          "completion_evidence": "drain", "context_overflow": "reject",
          "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
          "max_input_bytes": 1024}},
-       "backends": {"b": {"base_url": "http://127.0.0.1:18080",
+       "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:18080",
          "protocol": "anthropic-messages", "qualification_profile": "p"}},
        "services": {"s": {"backend": "b", "upstream_model": "m",
          "frontend_apis": ["anthropic-messages"], "max_context_tokens": 1000}}},

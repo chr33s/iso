@@ -278,11 +278,17 @@ package struct ManagedBackendProvisioner: Sendable {
     // the role account cannot point it elsewhere with a link.
     try makeDirectory(layout.logs, 0o755, 0, 0)
     try write([], to: layout.logs + "/backend.log", 0o600, 0, 0, keepContents: true)
-    try write(Array(plan.token.expose().utf8), to: layout.token, 0o640, 0, gid)
     try write(Array(ManagedBackend.launcherSource.utf8), to: layout.launcher, 0o644, 0, 0)
     try write(Array(ManagedBackend.profileSource.utf8), to: layout.profile, 0o644, 0, 0)
+    // `install` and a model fetch run downloaded code as the role account,
+    // with network access. No token, old or new, exists while they run, so
+    // that code cannot read one and send it out (§20.2).
+    guard unlink(layout.token) == 0 || errno == ENOENT else {
+      throw HostError.posix("Failed to remove the previous token", layout.token)
+    }
     let python = try runtime(plan, layout: layout, uid: uid, gid: gid)
     try installModel(plan, layout: layout, python: python.launch, uid: uid, gid: gid)
+    try write(Array(plan.token.expose().utf8), to: layout.token, 0o640, 0, gid)
     let arguments = ManagedBackend.programArguments(
       plan, layout: layout, python: python, tools: tools)
     try write(

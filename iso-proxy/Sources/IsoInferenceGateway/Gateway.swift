@@ -256,13 +256,14 @@ package final class Gateway: Sendable {
       let incoming = grant.backend
       if let existing = result[incoming.id] {
         guard existing.profile == incoming.profile,
-          existing.credential?.expose() == incoming.credential?.expose()
+          existing.credential?.expose() == incoming.credential?.expose(),
+          existing.front == incoming.front
         else {
           return (
             result,
             InferenceError(
               .modelUnqualified,
-              "backend \(incoming.id) is already registered with a different qualification profile or credential"
+              "backend \(incoming.id) is already registered with a different qualification profile, credential or front end"
             )
           )
         }
@@ -476,6 +477,7 @@ package final class Gateway: Sendable {
         JSONObject([
           "backend": .string(id.description), "name": .string(policy.name),
           "max_active": .int(Int64(policy.maxActive)),
+          "front": .string(policy.front.rawValue),
           "qualification_profile": .string(policy.profile.name),
           "protocol": .string(policy.profile.backendProtocol.rawValue),
           "completion_evidence": .string(policy.profile.evidence.rawValue),

@@ -67,8 +67,8 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   let good = ControlProtocol.encode(.shutdown(force: false))
   var unknown = good
   unknown["extra"] = .bool(true)
-  // Version 2 (no transport kind) and version 1 (TCP session ports) are
-  // refused, as is any other.
+  // Version 3 (no backend front end), version 2 (no transport kind) and
+  // version 1 (TCP session ports) are refused, as is any other.
   var version = good
   version["version"] = .int(ControlProtocol.version - 1)
   var oldest = good
@@ -78,7 +78,7 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   for message in [unknown, version, oldest, op] {
     #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(message) }
   }
-  #expect(ControlProtocol.version == 3)
+  #expect(ControlProtocol.version == 4)
   // A registration names its transport kind, one of the two.
   let registered = ControlProtocol.encode(.register(registration([grant(.openAIChat)])))
   var noKind = registered
@@ -87,10 +87,22 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   otherKind["transport"] = .string("direct")
   var versionTwo = registered
   versionTwo["version"] = .int(2)
-  for message in [noKind, otherKind, versionTwo] {
+  // Each grant's backend names its front end, one of the two.
+  func withFront(_ front: JSON?) -> JSONObject {
+    var message = registered
+    guard var grant = registered["grants"]?.array?.first?.object,
+      var backend = grant["backend"]?.object
+    else { return message }
+    backend["front"] = front
+    grant["backend"] = .object(backend)
+    message["grants"] = .array([.object(grant)])
+    return message
+  }
+  for message in [noKind, otherKind, versionTwo, withFront(nil), withFront(.string("proxy"))] {
     #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(message) }
   }
   _ = try ControlProtocol.decodeRequest(registered)
+  _ = try ControlProtocol.decodeRequest(withFront(.string("plain")))
   #expect(ControlProtocol.frameLength([0x7F, 0, 0, 0]) == nil)
 
   // A grant whose API needs a different backend protocol is refused.

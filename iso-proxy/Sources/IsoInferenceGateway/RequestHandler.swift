@@ -402,7 +402,15 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     if let credential = backend.credential {
       headers.add(name: "authorization", value: "Bearer " + credential.expose())
     }
-    let call = UpstreamCall(eventLoop: eventLoop, delegate: self)
+    // The launcher keys its prompt cache by session, so one VM's prompts
+    // never seed another's (§20.3).
+    var challenge: LauncherChallenge?
+    if backend.front == .launcher, let credential = backend.credential {
+      headers.add(name: LauncherChallenge.partitionHeader, value: session.id)
+      challenge = LauncherChallenge(token: credential, nonce: randomHex(32))
+    }
+    let call = UpstreamCall(
+      eventLoop: eventLoop, delegate: self, proofTimeout: timing.backendProof)
     upstream = call
     arm(&firstOutput, after: timing.firstOutput) { handler in
       handler.timedOut("time to first output exceeded")
@@ -411,7 +419,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     call.start(
       port: backend.id.port,
       head: HTTPRequestHead(version: .http1_1, method: .POST, uri: plan.api.path, headers: headers),
-      body: body)
+      body: body, challenge: challenge)
   }
 
   private func cancelled(_ reason: CancelReason) {
@@ -499,11 +507,16 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     respondToCompletion()
   }
 
-  func upstreamUnavailable() {
+  func upstreamUnavailable(_ refusal: UpstreamRefusal) {
     // Nothing reached the backend: release without evidence questions.
     settle()
     if cancellation == nil {
-      clientError(InferenceError(.backendUnavailable, "backend is not reachable"))
+      let message =
+        switch refusal {
+        case .unreachable: "backend is not reachable"
+        case .unproven: "the listener on the backend port did not prove it is the managed backend"
+        }
+      clientError(InferenceError(.backendUnavailable, message))
     }
     finishClient()
   }
@@ -610,6 +623,14 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     guard phase == .active, cancellation == nil, !settled, let plan else { return }
     phase = .cancelling
     firstOutput?.cancel()
+    if let upstream, !upstream.dispatched {
+      // Still connecting or proving: the request was never sent, so there
+      // is no backend work to wait for.
+      cancellation = .closing
+      upstream.close()
+      settle()
+      return finishClient()
+    }
     let profile = plan.backend.profile
     switch profile.evidence {
     case .drain:

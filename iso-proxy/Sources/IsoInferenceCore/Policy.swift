@@ -1,3 +1,5 @@
+import CryptoKit
+import Foundation
 import IsoProxyCore
 
 /// An owner-controlled qualification profile (§8.5, §11.1).
@@ -42,6 +44,18 @@ package struct BackendID: Sendable, Hashable, Comparable, CustomStringConvertibl
   package static func < (a: BackendID, b: BackendID) -> Bool { a.port < b.port }
 }
 
+/// What a backend's front end implements beyond HTTP (§20.3).
+package enum BackendFront: String, Sendable, Equatable, CaseIterable {
+  /// An owner-run server. Requests carry only the configured credential, to
+  /// whatever answers on the port.
+  case plain
+  /// iso's managed launcher. Every connection first proves that it holds the
+  /// backend's token (``LauncherChallenge``); no credential, header or body
+  /// is sent on a connection that fails. Every request names its session's
+  /// prompt-cache partition (``LauncherChallenge/partitionHeader``).
+  case launcher
+}
+
 package struct BackendPolicy: Sendable, Equatable {
   package let id: BackendID
   package let name: String
@@ -49,20 +63,57 @@ package struct BackendPolicy: Sendable, Equatable {
   package let profile: QualificationProfile
   /// A host-resolved bearer credential for the backend, if it needs one.
   package let credential: Secret?
+  package let front: BackendFront
 
   package init(
-    id: BackendID, name: String, maxActive: Int, profile: QualificationProfile, credential: Secret?
+    id: BackendID, name: String, maxActive: Int, profile: QualificationProfile, credential: Secret?,
+    front: BackendFront = .plain
   ) {
     self.id = id
     self.name = name
     self.maxActive = maxActive
     self.profile = profile
     self.credential = credential
+    self.front = front
   }
 
   package static func == (a: BackendPolicy, b: BackendPolicy) -> Bool {
     a.id == b.id && a.name == b.name && a.maxActive == b.maxActive && a.profile == b.profile
-      && a.credential?.expose() == b.credential?.expose()
+      && a.credential?.expose() == b.credential?.expose() && a.front == b.front
+  }
+}
+
+/// The managed launcher's per-connection proof (§20.3). The gateway sends
+/// `GET /iso/challenge/<nonce>` with no credential, and the answer must be
+/// the hex HMAC-SHA256 of the nonce under the backend's token. A process
+/// that took the port while the job was down cannot answer, so it never
+/// receives the token or a prompt.
+package struct LauncherChallenge: Sendable {
+  /// Names the session's prompt-cache partition on every launcher request.
+  package static let partitionHeader = "x-iso-cache-partition"
+
+  /// 64 lowercase hex digits.
+  package let nonce: String
+  private let expected: [UInt8]
+
+  package init(token: Secret, nonce: String) {
+    self.nonce = nonce
+    expected = Array(Self.answer(token: token.expose(), nonce: nonce).utf8)
+  }
+
+  /// What the launcher answers for `nonce`.
+  package static func answer(token: String, nonce: String) -> String {
+    let code = HMAC<SHA256>.authenticationCode(
+      for: Data(nonce.utf8), using: SymmetricKey(data: Data(token.utf8)))
+    return ControlProtocol.hex(Array(code))
+  }
+
+  package var path: String { "/iso/challenge/" + nonce }
+
+  /// Exactly the expected answer, compared in constant time.
+  package func accepts(_ answer: [UInt8]) -> Bool {
+    guard answer.count == expected.count else { return false }
+    return zip(answer, expected).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
   }
 }
 
@@ -155,6 +206,9 @@ package enum SessionLimits {
   package static let headerReadSeconds = 5
   package static let bodyReadSeconds = 15
   package static let firstOutputSeconds = 120
+  /// A launcher backend must answer the connection's challenge within this
+  /// long (§20.3); nothing has been sent to it before then.
+  package static let backendProofSeconds = 10
   package static let generationSeconds = 300
   package static let responseBytes = 16 << 20
   package static let cancellationGraceSeconds = 5

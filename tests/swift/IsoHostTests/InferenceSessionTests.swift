@@ -19,7 +19,7 @@ final class FakeGateway: Sendable {
     var epoch = "epoch-1"
     var next = 0
     var override: [String: [String: Any]] = [:]
-    var version = 3
+    var version = 4
     /// The backend ports it was "launched" for.
     var ports: [Int] = []
   }
@@ -184,7 +184,7 @@ private struct Rig {
             "completion_evidence": "drain", "context_overflow": "reject",
             "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
             "max_input_bytes": 1024}},
-          "backends": {"b": {"base_url": "http://127.0.0.1:\#(backends[0].port)",
+          "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:\#(backends[0].port)",
             "protocol": "anthropic-messages", "qualification_profile": "p"}},
           "services": {"s": {"backend": "b", "upstream_model": "m",
             "frontend_apis": ["anthropic-messages"], "max_context_tokens": 1000}}
@@ -238,10 +238,13 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(configuredBeforeActivation)
   let ops = rig.gateway.ops.filter { $0 != "inspect" }
   #expect(ops == ["revoke_session", "register_session", "activate_session"], "\(ops)")
-  // Control protocol 3: the vmnet relay is carried by the sandbox owner.
+  // Control protocol 4: the vmnet relay is carried by the sandbox owner, and
+  // an attached backend is a plain front end, never challenged.
   let registration = try #require(rig.gateway.request("register_session"))
-  #expect(registration["version"] as? Int == 3)
+  #expect(registration["version"] as? Int == 4)
   #expect(registration["transport"] as? String == "owner")
+  let backend = (registration["grants"] as? [[String: Any]])?.first?["backend"] as? [String: Any]
+  #expect(backend?["front"] as? String == "plain")
   // The relay is the owner's: no SSH forward is started for it.
   #expect(rig.guest.log("tunnels.log").isEmpty)
   #expect(result.session.transport == .owner)

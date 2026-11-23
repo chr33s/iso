@@ -229,6 +229,44 @@ private func mode(_ path: String) -> mode_t {
   #expect((readFile(system.log) ?? "").contains("-delete /Users/_isoinference"))
 }
 
+/// The role account runs downloaded code with network access during a model
+/// fetch (and `install`): no token, old or new, exists while it runs (§20.2).
+@Test func noTokenExistsWhileTheRoleAccountFetches() throws {
+  let port = try TCPListener(address: "127.0.0.1")
+  let chosen = port.port
+  port.close()
+  let system = try FakeSystem(port: chosen)
+  defer { system.stop() }
+  let layout = ManagedBackendLayout(name: mlxMain, prefix: system.prefix)
+  // A role-account run records whether a token is present, then fetches by
+  // writing a config into its last argument, the staging directory.
+  try writeFile(
+    system.root + "/sudo",
+    """
+    #!/bin/sh
+    if [ -e "\(layout.token)" ]; then echo "token present during a role run" >> "\(system.log)"; fi
+    echo "sudo $*" >> "\(system.log)"
+    for last; do :; done
+    echo '{}' > "$last/config.json"
+    exit 0
+    """, mode: 0o755)
+  var tools = system.tools
+  tools.sudo = system.root + "/sudo"
+  let provisioner = ManagedBackendProvisioner(tools: tools, prefix: system.prefix, log: { _ in })
+  let request = plan(
+    port: chosen, runtime: .python(HostPath(absolute: try python())),
+    model: .fetch(repository: "owner/model", revision: String(repeating: "a", count: 40)))
+  // A token left by an earlier provisioning is removed first, too.
+  try FileManager.default.createDirectory(
+    atPath: layout.directory, withIntermediateDirectories: true)
+  try writeFile(layout.token, "old")
+  try provisioner.provision(request)
+  let calls = readFile(system.log) ?? ""
+  #expect(calls.contains("snapshot_download"), "the fetch ran as the role account")
+  #expect(!calls.contains("token present"))
+  #expect(readFile(layout.token) == token && mode(layout.token) == 0o640)
+}
+
 @Test func weightsMayNotContainSymbolicLinks() throws {
   let model = try scratchDirectory("weights")
   defer { try? FileManager.default.removeItem(atPath: model) }
@@ -343,7 +381,9 @@ private func mode(_ path: String) -> mode_t {
   try BackendChecks.verifyRunAs("nobody", port: 1, managedJob: nil, listeners: { _ in [] })
 }
 
-private func managedBackend(_ confinement: String = "seatbelt") throws -> InferenceBackendConfig {
+private func managedBackend(_ confinement: String = "seatbelt", isolation: String = "verified")
+  throws -> InferenceBackendConfig
+{
   let config = try testConfig(
     #"""
     "inference": {
@@ -352,7 +392,7 @@ private func managedBackend(_ confinement: String = "seatbelt") throws -> Infere
         "context_overflow": "truncate", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
         "max_input_bytes": 1024}},
       "backends": {"mlx-main": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
-        "qualification_profile": "p",
+        "qualification_profile": "p", "isolation": "\#(isolation)",
         "managed": {"server": "mlx-lm", "python": "/opt/py/bin/python3", "model": "/models/m",
           "confinement": "\#(confinement)"}}},
       "services": {"s": {"backend": "mlx-main", "upstream_model": "default_model",
@@ -388,14 +428,59 @@ private func managedBackend(_ confinement: String = "seatbelt") throws -> Infere
       try BackendChecks.require(name: "mlx-main", backend: backend, bad)
     }
   }
-  // `confinement: "none"` exempts only the sandbox check.
+  // `confinement: "none"` exempts only the sandbox check, and only for a
+  // backend accepted as unverified.
   var open = good
   open.confined = false
-  try BackendChecks.require(name: "mlx-main", backend: try managedBackend("none"), open)
-  open.challenged = nil
+  #expect(open.unverified == ["its sandbox"])
   #expect(throws: HostError.self) {
     try BackendChecks.require(name: "mlx-main", backend: try managedBackend("none"), open)
   }
+  let accepted = try managedBackend("none", isolation: "unverified")
+  try BackendChecks.require(name: "mlx-main", backend: accepted, open)
+  open.challenged = nil
+  #expect(throws: HostError.self) {
+    try BackendChecks.require(name: "mlx-main", backend: accepted, open)
+  }
+}
+
+/// An attached backend can never be verified: it needs the owner's explicit
+/// acceptance, and then only the bind and run_as checks apply.
+@Test func unverifiedBackendsNeedExplicitAcceptance() throws {
+  func attached(_ isolation: String?) throws -> InferenceBackendConfig {
+    let member = isolation.map { #", "isolation": "\#($0)""# } ?? ""
+    let config = try testConfig(
+      #"""
+      "inference": {
+        "mode": "required",
+        "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain",
+          "context_overflow": "truncate", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+          "max_input_bytes": 1024}},
+        "backends": {"local": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
+          "qualification_profile": "p"\#(member)}},
+        "services": {"s": {"backend": "local", "upstream_model": "m",
+          "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}
+      }
+      """#)
+    return try #require(config.inference.backends["local"])
+  }
+  var observed = BackendVerification()
+  observed.reachable = true
+  #expect(!observed.isolationVerified)
+  #expect(try attached(nil).isolation == .verified)
+  #expect(throws: HostError.self) {
+    try BackendChecks.require(name: "local", backend: try attached(nil), observed)
+  }
+  #expect(throws: HostError.self) {
+    try BackendChecks.require(name: "local", backend: try attached("verified"), observed)
+  }
+  try BackendChecks.require(name: "local", backend: try attached("unverified"), observed)
+  // Acceptance does not lift the bind check.
+  observed.exposedAddresses = ["192.168.1.2"]
+  #expect(throws: HostError.self) {
+    try BackendChecks.require(name: "local", backend: try attached("unverified"), observed)
+  }
+  #expect(throws: (any Error).self) { try attached("trusted") }
 }
 
 /// The challenge is answered only by a holder of the token, and the probe

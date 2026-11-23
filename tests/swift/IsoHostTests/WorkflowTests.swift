@@ -335,7 +335,7 @@ private let requiredInference = #"""
     "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain",
       "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
       "max_input_bytes": 1024}},
-    "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
+    "backends": {"b": {"isolation": "unverified", "base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
       "qualification_profile": "p"}},
     "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"],
       "max_context_tokens": 1000}}}
