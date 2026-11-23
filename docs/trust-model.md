@@ -54,7 +54,8 @@ user launched it.
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint. Reached over the network; authenticated where applicable. |
 | Managed backend `install` downloads | External, pinned by hash | Only during `iso inference provision` of a backend with `managed.install`, as the `_isoinference` role account, never as root. One python-build-standalone release asset from `github.com/astral-sh/python-build-standalone` (redirected to `release-assets.githubusercontent.com`), which root checks against the size and SHA-256 in `PythonArchive.standalone` before anything unpacks it. Then the wheels named in iso's hash-locked requirements file, from `pypi.org` and `files.pythonhosted.org`; pip refuses any file whose hash is not in the lock. Unauthenticated, HTTPS only. A model `fetch` reaches Hugging Face at a pinned commit. |
 | iso-ci companion → GitHub Actions service | External | Scale-set pools only (`iso-ci/`, separately installed): the host-side controller exchanges a runner registration token for an Actions service admin token and holds a message-session token. Both stay in controller memory and go only to `https` hosts under `.actions.githubusercontent.com` (no redirects); guests receive only the JIT runner configuration. Each job is gated on GitHub's run record before acquisition (elastic scale sets) or on assignment (non-elastic, where a refused or unvetted assigned job stops all new runners). Only an elastic scale set with `min_runners: 0` may opt into public repositories (fork pull requests refused, write-gated events or named actors only). |
-| `iso-inference` gateway (host) | Trusted, confined | One per host user, under its own Seatbelt profile. It holds no cloud key, SSH key or runtime credential, only an optional local-backend credential. It parses untrusted guest HTTP (see [Guarded local inference](#guarded-local-inference)). |
+| `iso-inference` broker (host) | Trusted, confined | One per host user, under its own Seatbelt profile. It holds no cloud key, SSH key or runtime credential, and parses no guest bytes: it keeps the scheduler, journal, audit log and session records, and talks only to iso and the session workers (see [Guarded local inference](#guarded-local-inference)). |
+| `iso-inference` session worker (host) | Exposed to one guest, confined | One per VM session, started by iso under a profile rendered for that session: only its session socket, the broker's worker socket and its grants' backend ports. It parses that guest's untrusted HTTP and holds that session's capability and its backends' credentials, never another session's. |
 | Attached local model server | Trusted computing base, **not** confined by iso | A process the user started on host loopback, used only when its backend sets `"isolation": "unverified"`. The gateway narrows what reaches it, but its own file, network and prompt-logging behavior is outside iso's control and reported as unverified. |
 | iso VM leases (`~/.iso/run/leases`) | Host-local | Written and `flock`-held by iso-sandbox VM owner processes; read by iso-ci to count CPU, memory and macOS VMs it does not own. Host-authored, never guest-authored; parsed strictly and bounded. |
 
@@ -1089,25 +1090,43 @@ The gateway enforces an API boundary. It does not isolate the host.
   configuration only. The controller refuses a backend that also answers on any
   non-loopback host address (`INFERENCE_BACKEND_UNSAFE_BIND`).
 - **Confinement.** `sandbox-exec` with
-  `Sources/IsoHost/Inference/Resources/seatbelt-inference.sb`: writes only
-  under the owner-only state directory (`~/Library/Application
-  Support/iso/inference`, `0700`) and the relay directory; Unix-socket bind and
-  inbound only in those two directories and no TCP listener; no program
-  execution beyond the initial exec of the gateway binary; reads limited to
-  system paths, the binary and those directories; outbound only to the
-  configured backend ports (rendered per launch); metadata reads (stat) on
-  any path, for path resolution; and no information about any other process.
+  `Sources/IsoHost/Inference/Resources/seatbelt-inference.sb`: writes, and
+  Unix-socket bind and inbound, only under the owner-only state directory
+  (`~/Library/Application Support/iso/inference`, `0700`); no TCP listener
+  and no outbound connection of any kind (the session workers bind the
+  session sockets and reach the backends); no program execution beyond the
+  initial exec of the broker binary; reads limited to system paths, the
+  binary and the state directory; metadata reads (stat) on any path, for
+  path resolution; and no information about any other process.
   `deny default` alone still lets a confined process read this user's other
   processes with `proc_pidinfo` and `proc_pidpath`, so the profile denies
-  `process-info*` explicitly and allows only the gateway's own; the exit
-  watch and the peer token need neither. The gateway checks its own
-  confinement at every start, including that reading another process's
-  information is denied. The control socket is `0600`. Both sides check
+  `process-info*` explicitly and allows only the broker's own; the exit watch and the peer token need
+  neither. The broker checks its own confinement at every start, including
+  that writes in the relay directory, every loopback port and reading
+  another process's information are denied. The control socket is `0600`. Both sides check
   the peer's UID; the controller also checks that the peer's executable is
   the `iso-inference` beside `iso` (itself held to the runtime's owner and
   write checks, and signed like `iso` in release builds) and that the kernel
   reports it sandboxed. Revocation succeeds only when the gateway confirms it
   or is not running; a refusal or protocol mismatch is reported, not ignored.
+- **Session workers** (control protocol 6, spec §5.1). The gateway above is a
+  broker: it binds no session socket and parses no guest bytes. iso starts
+  one `iso-inference --worker` per session after registration, under
+  `Sources/IsoHost/Inference/Resources/seatbelt-inference-worker.sb`
+  rendered for it. That profile allows writes, bind and inbound only on that
+  session's socket, outbound only to the broker's `workers.sock` and to the
+  backend ports of that session's grants, no other writes, no program
+  execution and no information about other processes; the worker checks
+  these denials at start. A one-time key from the registration reaches it
+  on stdin. The broker checks the peer's UID, compares the key in constant
+  time and attaches one worker per session. It then serves that link only
+  for that session: it admits only the grants' backends, settles only
+  tickets it issued to that worker, and records only a closed set of audit
+  events with identifier values. A compromise through one VM's requests
+  therefore reaches that session's capability and backend credentials, not
+  another session's requests, capability or socket. A worker whose link
+  closes ends its session and quarantines any backend it held uncertain
+  work on; a worker whose broker goes away revokes its session.
 - **Managed backend** (`backends.<name>.managed`). `iso inference provision`
   runs one root step (`sudo -- iso inference provision-system`) that reads a
   strictly decoded plan on stdin, never the user's configuration. It creates

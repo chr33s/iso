@@ -21,7 +21,9 @@ INFERENCE_OUT = INFERENCE / "EmbeddedInference.swift"
 # (Swift name, resource file, doc line)
 INFERENCE_RESOURCES = [
     ("gatewayProfile", "seatbelt-inference.sb",
-     "The `iso-inference` Seatbelt profile; `SeatbeltProfile.inference(backendPorts:)` renders its port rules."),
+     "The `iso-inference` broker's Seatbelt profile (`SeatbeltProfile.inference`)."),
+    ("workerProfile", "seatbelt-inference-worker.sb",
+     "A session worker's Seatbelt profile; `SeatbeltProfile.inferenceWorker(backendPorts:)` renders its port rules."),
     ("launcher", "inference-launcher.py",
      "The managed mlx-lm backend's launcher, installed by `iso inference provision`."),
     ("backendProfile", "seatbelt-inference-backend.sb",

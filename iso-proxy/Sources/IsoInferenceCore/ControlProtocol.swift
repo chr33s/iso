@@ -10,8 +10,10 @@ package enum ControlProtocol {
   /// (`owner` or `forward`), which fixes the process activation may bind.
   /// 4: each grant's backend names its front end (`front`), which fixes
   /// whether connections are challenged (§20.3). 5: an activation binds the
-  /// transport by PID and `pidversion`, not start time (§12.3).
-  package static let version: Int64 = 5
+  /// transport by PID and `pidversion`, not start time (§12.3). 6: the
+  /// gateway is a broker that parses no guest bytes; a registration's answer
+  /// carries the key of the session's worker, which serves the socket (§5.1).
+  package static let version: Int64 = 6
   package static let maxFrameBytes = 256 << 10
 
   package enum Request: Sendable {

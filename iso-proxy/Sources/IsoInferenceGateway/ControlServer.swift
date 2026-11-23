@@ -140,16 +140,15 @@ package final class ControlServer: Sendable {
     switch request {
     case .register(let registration):
       let registered = try gateway.register(registration)
-      return (
-        ControlProtocol.success(
-          JSONObject([
-            "session_id": .string(registered.sessionID), "epoch": .string(gateway.epoch),
-            "socket": .string(registered.socket),
-            "capability": .string(registered.capability.expose()),
-            "gateway_pid": .int(Int64(gateway.pid)),
-            "policy_digest": .string(registered.policyDigest),
-          ])), false
-      )
+      var fields = JSONObject([
+        "session_id": .string(registered.sessionID), "epoch": .string(gateway.epoch),
+        "socket": .string(registered.socket),
+        "capability": .string(registered.capability.expose()),
+        "gateway_pid": .int(Int64(gateway.pid)),
+        "policy_digest": .string(registered.policyDigest),
+      ])
+      if let key = registered.workerKey { fields["worker_key"] = .string(key.expose()) }
+      return (ControlProtocol.success(fields), false)
     case .activate(let activation):
       try gateway.activate(activation)
       return (ControlProtocol.success(), false)

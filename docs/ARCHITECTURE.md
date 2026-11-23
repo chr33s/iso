@@ -30,7 +30,7 @@ A distribution holds six executables. The first five are host processes;
 | `iso` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
 | `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations; macOS guests (`iso-sandbox macos …`) on Virtualization.framework directly |
 | `iso-proxy` | [`iso-proxy/`](../iso-proxy) | Confined, credential-bearing provider transport |
-| `iso-inference` | [`iso-proxy/`](../iso-proxy) | Confined per-user gateway that exposes host-side local models to vmnet Linux VMs through per-session capabilities, reached over the runtime's vsock socket relay ([design](design/secure-local-inference-spec.md)) |
+| `iso-inference` | [`iso-proxy/`](../iso-proxy) | Confined per-user broker (scheduler, journal, audit, control socket) and one confined worker per VM session, which serves that session's socket and requests; it exposes host-side local models to Linux VMs through per-session capabilities, over the runtime's vsock relay or the brokered SSH forward ([design](design/secure-local-inference-spec.md)) |
 | `iso-egress` | [`iso-egress/`](../iso-egress) | Confined CONNECT companion for filtered egress; no provider credentials |
 | `iso-macos-helper` | [`iso-sandbox/`](../iso-sandbox) | Guest agent that `iso-sandbox macos template build` installs in macOS templates; never runs on the host |
 

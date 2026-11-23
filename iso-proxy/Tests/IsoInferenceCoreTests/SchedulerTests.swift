@@ -30,8 +30,8 @@ private func work(
 ) -> Scheduler.Work {
   Scheduler.Work(
     session: session, backend: BackendID(port: backend), backendMaxActive: maxActive,
-    outputTokens: tokens, dispatch: { log.add("run \(label)") },
-    cancel: { reason in log.add("cancel \(label) \(reason)") })
+    outputTokens: tokens, dispatch: { _ in log.add("run \(label)") },
+    cancel: { _, reason in log.add("cancel \(label) \(reason)") })
 }
 
 private func makeScheduler(_ clock: TestClock, active: Int = 2, queued: Int = 32) -> Scheduler {

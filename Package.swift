@@ -49,6 +49,7 @@ let package = Package(
         "Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb",
         "Guest/Resources/desktop-pre.sh", "Guest/Resources/desktop-post.sh",
         "Inference/Resources/seatbelt-inference.sb",
+        "Inference/Resources/seatbelt-inference-worker.sb",
         "Inference/Resources/seatbelt-inference-backend.sb",
         "Inference/Resources/inference-launcher.py",
         "Inference/Resources/mlx-lm-0.31.3.lock",

@@ -57,6 +57,7 @@ final class FakeBackend: Sendable {
   private let finished = Mutex(0)
   private let hangsEnded = Mutex(0)
   private let closed = Mutex(false)
+  private let concurrent = Mutex((now: 0, peak: 0))
 
   init(_ script: Script, challenge: Challenge? = nil) throws {
     self.script = Mutex(script)
@@ -105,6 +106,8 @@ final class FakeBackend: Sendable {
   var completed: Int { finished.withLock { $0 } }
   /// `streamThenHang` connections the gateway closed.
   var closedWhileHanging: Int { hangsEnded.withLock { $0 } }
+  /// The most requests the backend served at once.
+  var peakConcurrency: Int { concurrent.withLock { $0.peak } }
 
   /// One Content-Length framed request from `buffer` and the connection.
   private func readRequest(_ connection: Int32, _ buffer: inout [UInt8]) -> Recorded? {
@@ -180,6 +183,11 @@ final class FakeBackend: Sendable {
     let head = request.head
     let body = request.body
     recorded.withLock { $0.append(Recorded(head: head, body: body, connection: number)) }
+    concurrent.withLock {
+      $0.now += 1
+      $0.peak = max($0.peak, $0.now)
+    }
+    defer { concurrent.withLock { $0.now -= 1 } }
     let current = script.withLock { $0 }
     switch current {
     case .stream(let events, let pause):

@@ -15,6 +15,7 @@ package enum CancelReason: Sendable, Equatable {
 package final class Scheduler: Sendable {
   package struct Ticket: Sendable, Hashable, CustomStringConvertible {
     package let id: UInt64
+    package init(id: UInt64) { self.id = id }
     package var description: String { "request-\(id)" }
   }
 
@@ -23,15 +24,17 @@ package final class Scheduler: Sendable {
     package let backend: BackendID
     package let backendMaxActive: Int
     package let outputTokens: Int
-    /// Called once, outside the lock, when the work may start upstream.
-    package let dispatch: @Sendable () -> Void
+    /// Called once, outside the lock, with the work's ticket, when the work
+    /// may start upstream.
+    package let dispatch: @Sendable (Ticket) -> Void
     /// Called at most once, outside the lock. Queued work is already
     /// removed; active work keeps its slot until `finish`.
-    package let cancel: @Sendable (CancelReason) -> Void
+    package let cancel: @Sendable (Ticket, CancelReason) -> Void
 
     package init(
       session: String, backend: BackendID, backendMaxActive: Int, outputTokens: Int,
-      dispatch: @escaping @Sendable () -> Void, cancel: @escaping @Sendable (CancelReason) -> Void
+      dispatch: @escaping @Sendable (Ticket) -> Void,
+      cancel: @escaping @Sendable (Ticket, CancelReason) -> Void
     ) {
       self.session = session
       self.backend = backend
@@ -129,6 +132,20 @@ package final class Scheduler: Sendable {
   /// normalization or admission still count toward the rate (§9.1).
   package struct Permit: Sendable {
     let session: String
+    /// The broker's receipt for a permit it issued to a session worker
+    /// (§5.1); 0 for an in-process permit.
+    package let remote: UInt64
+
+    init(session: String) {
+      self.session = session
+      remote = 0
+    }
+
+    /// A session worker's copy of the broker's permit `remote`.
+    package init(session: String, remote: UInt64) {
+      self.session = session
+      self.remote = remote
+    }
   }
 
   /// Take one request token from `session`'s bucket.
@@ -194,7 +211,7 @@ package final class Scheduler: Sendable {
       return .success((.queued(ticket), []))
     }
     let (admission, started) = try result.get()
-    for entry in started { entry.work.dispatch() }
+    for entry in started { entry.work.dispatch(entry.ticket) }
     return admission
   }
 
@@ -218,7 +235,7 @@ package final class Scheduler: Sendable {
       }
       return Self.drain(&state)
     }
-    for entry in started { entry.work.dispatch() }
+    for entry in started { entry.work.dispatch(entry.ticket) }
   }
 
   /// Queued work withdrawn (client gone, queue deadline): it never ran, so
@@ -253,7 +270,7 @@ package final class Scheduler: Sendable {
       state.backends[work.backend] = backend
       return Self.removeQueued(&state) { $0.work.backend == work.backend }
     }
-    for entry in cancelled { entry.work.cancel(.backendQuarantined) }
+    for entry in cancelled { entry.work.cancel(entry.ticket, .backendQuarantined) }
   }
 
   package func quarantine(_ backend: BackendID, _ reason: QuarantineReason) {
@@ -265,7 +282,7 @@ package final class Scheduler: Sendable {
       state.backends[backend] = ledger
       return Self.removeQueued(&state) { $0.work.backend == backend }
     }
-    for entry in cancelled { entry.work.cancel(.backendQuarantined) }
+    for entry in cancelled { entry.work.cancel(entry.ticket, .backendQuarantined) }
   }
 
   /// Host-side requalification (§9.2). Refused while this gateway still
@@ -287,21 +304,29 @@ package final class Scheduler: Sendable {
       state.backends[backend] = ledger
       return .success(Self.drain(&state))
     }
-    for entry in try result.get() { entry.work.dispatch() }
+    for entry in try result.get() { entry.work.dispatch(entry.ticket) }
   }
 
   /// Revoke a session: queued work is removed, active work is told to
   /// cancel (and keeps its slot until evidence).
   package func removeSession(_ session: String, reason: CancelReason) {
-    let (queued, active) = state.withLock { state -> ([Entry], [Work]) in
+    let (queued, active) = state.withLock { state -> ([Entry], [(Ticket, Work)]) in
       let queued = Self.removeQueued(&state) { $0.work.session == session }
       state.sessions[session] = nil
       state.order.removeAll { $0 == session }
-      let active = state.active.values.filter { $0.session == session }
+      let active = state.active.filter { $0.value.session == session }.map { ($0.key, $0.value) }
       return (queued, active)
     }
-    for entry in queued { entry.work.cancel(reason) }
-    for work in active { work.cancel(reason) }
+    for entry in queued { entry.work.cancel(entry.ticket, reason) }
+    for (ticket, work) in active { work.cancel(ticket, reason) }
+  }
+
+  /// The session's work that holds a slot: on a worker's disconnect, work
+  /// no evidence will settle (§5.1).
+  package func activeTickets(session: String) -> [Ticket] {
+    state.withLock { state in
+      state.active.filter { $0.value.session == session }.map(\.key)
+    }
   }
 
   /// Queued entries older than the queue deadline, withdrawn and returned.

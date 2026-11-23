@@ -19,7 +19,9 @@ final class FakeGateway: Sendable {
     var epoch = "epoch-1"
     var next = 0
     var override: [String: [String: Any]] = [:]
-    var version = 5
+    var version = 6
+    /// Whether registrations name a worker key, as the broker does.
+    var workerKeys = true
     /// The backend ports it was "launched" for.
     var ports: [Int] = []
   }
@@ -108,6 +110,9 @@ final class FakeGateway: Sendable {
       reply["epoch"] = s.epoch
       reply["capability"] = String(repeating: "c", count: 63) + String(s.next % 10)
       reply["socket"] = request["socket"]
+      if s.workerKeys {
+        reply["worker_key"] = String(repeating: "d", count: 63) + String(s.next % 10)
+      }
     case "activate_session":
       let id = request["session_id"] as? String
       for index in s.sessions.indices where s.sessions[index].id == id {
@@ -155,6 +160,8 @@ final class FakeGateway: Sendable {
 private struct Rig {
   let guest: FakeGuest
   let gateway: FakeGateway
+  /// The workers the controller started, in order.
+  let launches = Launches()
   let instance: Instance
   let backends: [TCPListener]
   let stateDirectory: String
@@ -200,17 +207,19 @@ private struct Rig {
     .forward(socket: relay + "/8e84.sock", granted: granted)
   }
 
-  func controller(_ config: IsoConfig? = nil, carrier: InferenceCarrier? = nil) throws
-    -> InferenceController
-  {
+  func controller(
+    _ config: IsoConfig? = nil, carrier: InferenceCarrier? = nil, relayDirectory: String? = nil
+  ) throws -> InferenceController {
     let resolver = CredentialResolver(environment: guest.environment)
+    let relay = relayDirectory ?? self.relay
     let carrier = carrier ?? .relay(socket: relay + "/8e84.sock")
     return InferenceController(
       config: try config ?? self.config, environment: guest.environment, resolver: resolver,
       diagnostics: guest.sink.diagnostics, isoExecutable: nil, proxies: guest.proxies(resolver),
       boot: { _ in InferenceBoot(ownerPID: getpid(), deadline: nil, carrier: carrier) },
       sandboxExec: "/usr/bin/false", stateDirectory: stateDirectory, relayDirectory: relay,
-      peerCheck: { _ in }, carrierCheck: { _, _ in })
+      peerCheck: { _ in }, carrierCheck: { _, _ in },
+      workerLauncher: { [launches] launch in launches.record(launch) })
   }
 
   func remove() {
@@ -241,10 +250,10 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(configuredBeforeActivation)
   let ops = rig.gateway.ops.filter { $0 != "inspect" }
   #expect(ops == ["revoke_session", "register_session", "activate_session"], "\(ops)")
-  // Control protocol 5: the vmnet relay is carried by the sandbox owner, and
+  // Control protocol 6: the vmnet relay is carried by the sandbox owner, and
   // an attached backend is a plain front end, never challenged.
   let registration = try #require(rig.gateway.request("register_session"))
-  #expect(registration["version"] as? Int == 5)
+  #expect(registration["version"] as? Int == 6)
   #expect(registration["transport"] as? String == "owner")
   let backend = (registration["grants"] as? [[String: Any]])?.first?["backend"] as? [String: Any]
   #expect(backend?["front"] as? String == "plain")
@@ -925,4 +934,84 @@ private func waitUntil(_ condition: () -> Bool) -> Bool {
   let prepared = try env.prepare("true", terminal: .requested)
   #expect(!prepared.remote.contains(token))
   #expect(!prepared.environment([:]).values.contains(token))
+}
+
+/// The worker launches a rig's controller made.
+private final class Launches: Sendable {
+  private let recorded = Mutex<[WorkerLaunch]>([])
+  func record(_ launch: WorkerLaunch) { recorded.withLock { $0.append(launch) } }
+  var all: [WorkerLaunch] { recorded.withLock { $0 } }
+}
+
+/// Each new session gets its own worker (§5.1): started after the nonce is
+/// confirmed and before activation, for that session's socket, with the key
+/// the gateway returned on stdin and only the session's backend ports.
+@Test func eachSessionStartsItsOwnWorker() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  // A second backend no service of this session uses: its port is not the
+  // worker's to reach.
+  let config = try testConfig(
+    #"""
+    "inference": {
+      "mode": "required",
+      "qualification_profiles": {"p": {"protocol": "anthropic-messages",
+        "completion_evidence": "drain", "context_overflow": "reject",
+        "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+        "max_input_bytes": 1024}},
+      "backends": {
+        "b": {"isolation": "unverified", "base_url": "http://127.0.0.1:\#(rig.backends[0].port)",
+          "protocol": "anthropic-messages", "qualification_profile": "p"},
+        "unused": {"isolation": "unverified", "base_url": "http://127.0.0.1:1999",
+          "protocol": "anthropic-messages", "qualification_profile": "p"}},
+      "services": {"s": {"backend": "b", "upstream_model": "m",
+        "frontend_apis": ["anthropic-messages"], "max_context_tokens": 1000}}
+    },
+    "claude": {"local_model": {"service": "s"}}
+    """#)
+  rig.gateway.state.withLock { $0.ports.append(1999) }
+  // The relay directory through a symlink, as `/var` is to `/private/var`.
+  let linked = rig.guest.root + "/rl-link"
+  try FileManager.default.createSymbolicLink(atPath: linked, withDestinationPath: rig.relay)
+  var launchedBeforeActivation = false
+  let result = try #require(
+    try rig.controller(config, relayDirectory: linked).ensureSession(
+      rig.instance, target: rig.guest.target
+    ) { _, _ in
+      launchedBeforeActivation =
+        rig.launches.all.count == 1 && !rig.gateway.ops.contains("activate_session")
+    })
+  #expect(launchedBeforeActivation)
+  let launch = try #require(rig.launches.all.first)
+  #expect(rig.launches.all.count == 1)
+  #expect(launch.sessionID == result.session.sessionID)
+  // Resolved: the worker's profile names the path Seatbelt matches.
+  #expect(launch.socketPath == InferenceController.realPath(rig.relay) + "/8e84.sock")
+  #expect(launch.socketPath != linked + "/8e84.sock")
+  #expect(launch.key.expose() == String(repeating: "d", count: 63) + "1")
+  #expect(launch.backendPorts == [rig.backends[0].port])
+  let argv = launch.sandboxArguments(binary: "/opt/iso-inference", broker: "/st/workers.sock")
+  #expect(argv.contains("SESSION_SOCKET=\(launch.socketPath)"))
+  #expect(argv.contains("BROKER_SOCKET=/st/workers.sock"))
+  #expect(!argv.joined(separator: " ").contains(launch.key.expose()), "the key goes on stdin")
+  let profile = try #require(argv.first { $0.contains("(deny default)") })
+  #expect(profile.contains("localhost:\(rig.backends[0].port)"))
+  #expect(!profile.contains("localhost:1999"))
+  // A recorded session is reused: no second worker.
+  _ = try rig.controller(config, relayDirectory: linked).ensureSession(
+    rig.instance, target: rig.guest.target)
+  #expect(rig.launches.all.count == 1)
+}
+
+/// A gateway that names no worker is refused, and the partial session revoked.
+@Test func aRegistrationWithoutAWorkerKeyFailsClosed() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  rig.gateway.state.withLock { $0.workerKeys = false }
+  #expect(throws: (any Error).self) {
+    try rig.controller().ensureSession(rig.instance, target: rig.guest.target)
+  }
+  #expect(rig.gateway.ops.contains("register_session"), "the registration itself succeeded")
+  #expect(rig.launches.all.isEmpty)
+  #expect(!rig.gateway.ops.contains("activate_session"))
 }

@@ -28,6 +28,23 @@ package enum InferenceCarrier: Sendable, Equatable {
   case forward(socket: String, granted: Bool)
 }
 
+/// What starts one session's worker (spec §5.1).
+package struct WorkerLaunch: Sendable, Equatable {
+  package let sessionID: String
+  package let socketPath: String
+  package let key: Secret<String>
+  package let backendPorts: [UInt16]
+
+  /// `sandbox-exec` with the worker profile, then the worker's own argv.
+  func sandboxArguments(binary: String, broker: String) -> [String] {
+    [
+      "-D", "INFERENCE_BIN=\(binary)", "-D", "SESSION_SOCKET=\(socketPath)", "-D",
+      "BROKER_SOCKET=\(broker)", "-p", SeatbeltProfile.inferenceWorker(backendPorts: backendPorts),
+      binary, "--worker", "--broker", broker, "--socket", socketPath, "--session", sessionID,
+    ]
+  }
+}
+
 /// The gateway's transport kind (control protocol 3 and later): which
 /// process activation binds the session to.
 package enum InferenceTransportKind: String, Sendable, Equatable {
@@ -129,7 +146,7 @@ package struct InferenceController: Sendable {
   package static let guestPort: UInt16 = 11788
   /// The gateway control protocol this host speaks (IsoInferenceCore's
   /// `ControlProtocol.version`).
-  static let controlVersion: UInt64 = 5
+  static let controlVersion: UInt64 = 6
   static let controlTimeoutSeconds = 15
   static let startTimeout: Duration = .seconds(5)
 
@@ -152,6 +169,8 @@ package struct InferenceController: Sendable {
   /// Checks the process a session will be bound to; production uses
   /// `checkCarrier`, tests stand-in processes.
   let carrierCheck: (@Sendable (BoundProcess, InferenceTransportKind) throws -> Void)?
+  /// Starts a session's worker; production uses `spawnWorker`, tests record it.
+  let workerLauncher: (@Sendable (WorkerLaunch) throws -> Void)?
 
   package init(
     config: IsoConfig, environment: [String: String], resolver: CredentialResolver,
@@ -171,10 +190,12 @@ package struct InferenceController: Sendable {
     boot: @escaping @Sendable (Instance) throws -> InferenceBoot, sandboxExec: String,
     stateDirectory: String, relayDirectory: String,
     peerCheck: (@Sendable (ControlSocket.Peer) throws -> Void)? = nil,
-    carrierCheck: (@Sendable (BoundProcess, InferenceTransportKind) throws -> Void)? = nil
+    carrierCheck: (@Sendable (BoundProcess, InferenceTransportKind) throws -> Void)? = nil,
+    workerLauncher: (@Sendable (WorkerLaunch) throws -> Void)? = nil
   ) {
     self.peerCheck = peerCheck
     self.carrierCheck = carrierCheck
+    self.workerLauncher = workerLauncher
     self.config = config
     self.environment = environment
     self.resolver = resolver
@@ -344,6 +365,17 @@ package struct InferenceController: Sendable {
     var bound = [owner]
     do {
       try verifyRegistered(instance, sessionID: sessionID, nonce: nonce)
+      // The session's worker (§5.1) serves the socket; it starts while the
+      // guest is configured, and activation waits for it.
+      guard case .string(let key)? = registered["worker_key"] else {
+        throw HostError("iso-inference named no worker for the session (fail-closed)")
+      }
+      // Resolved, as the worker's profile names it: Seatbelt matches
+      // resolved paths (`/var` is `/private/var`).
+      try launchWorker(
+        WorkerLaunch(
+          sessionID: sessionID, socketPath: Self.realPath(relayDirectory) + "/" + socket,
+          key: Secret(key), backendPorts: Set(resolved.map(\.backend.port)).sorted()))
       try configureGuest(session, Secret(capability))
       // The session lives as long as the process that carries guest
       // connections: the owner relaying it (its exit, a VM stop, revokes the
@@ -927,8 +959,8 @@ package struct InferenceController: Sendable {
       try DetachedChild.spawn(
         executable: sandboxExec,
         arguments: [
-          "-D", "INFERENCE_BIN=\(binary)", "-D", "STATE_DIR=\(directory)", "-D",
-          "RELAY_DIR=\(relay)", "-p", SeatbeltProfile.inference(backendPorts: ports), binary,
+          "-D", "INFERENCE_BIN=\(binary)", "-D", "STATE_DIR=\(directory)", "-p",
+          SeatbeltProfile.inference, binary,
           "--state-dir", directory, "--relay-dir", relay,
         ] + ports.flatMap { ["--backend-port", String($0)] }, environment: [:], stdin: .null,
         stderr: log)
@@ -951,6 +983,36 @@ package struct InferenceController: Sendable {
   }
 
   static let gatewayFileLimit: rlim_t = 8192
+
+  func launchWorker(_ launch: WorkerLaunch) throws {
+    if let workerLauncher { return try workerLauncher(launch) }
+    try spawnWorker(launch)
+  }
+
+  /// One session's worker under its own profile: only its session socket,
+  /// the broker's worker socket and its grants' backend ports (§5.1). The
+  /// key goes on stdin, never argv. Its stderr appends to `worker.log`.
+  func spawnWorker(_ launch: WorkerLaunch) throws {
+    let binary = try locateBinary()
+    let broker = workerSocketPath
+    let logPath = stateDirectory + "/worker.log"
+    let log = open(logPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
+    guard log >= 0 else { throw HostError.posix("Failed to open", logPath) }
+    defer { close(log) }
+    var child = try DetachedChild.spawn(
+      executable: sandboxExec,
+      arguments: launch.sandboxArguments(binary: binary, broker: broker),
+      environment: [:], stdin: .pipe, stderr: log)
+    do {
+      try child.writeAndCloseStdin(Array((launch.key.expose() + "\n").utf8))
+    } catch {
+      child.kill()
+      throw ContextError(
+        "Failed to start the inference session's worker (fail-closed)", cause: error)
+    }
+  }
+
+  var workerSocketPath: String { Self.realPath(stateDirectory) + "/workers.sock" }
 
   /// `body` with this process's soft descriptor limit raised to `limit`
   /// (or the hard limit), restored afterwards; a child spawned in `body`

@@ -61,6 +61,16 @@ package final class AuditLog: Sendable {
     append(JSON.object(object).serialized + [0x0A])
   }
 
+  /// A record whose fields a session worker sent, already limited to its
+  /// event's allowed members (``WorkerProtocol/auditEvents``).
+  package func record(_ event: String, object fields: JSONObject) {
+    var object = JSONObject([
+      "time": .int(Int64(time(nil))), "event": .string(event),
+    ])
+    for member in fields.members { object[member.key] = member.value }
+    append(JSON.object(object).serialized + [0x0A])
+  }
+
   /// One rejected request.
   package func rejected(session: String, code: InferenceErrorCode) {
     let key = Key(session: session, code: code)

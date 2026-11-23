@@ -30,6 +30,7 @@ private func python() throws -> String { try requireSystemPython() }
     (EmbeddedInference.launcher, "inference-launcher.py"),
     (EmbeddedInference.backendProfile, "seatbelt-inference-backend.sb"),
     (EmbeddedInference.gatewayProfile, "seatbelt-inference.sb"),
+    (EmbeddedInference.workerProfile, "seatbelt-inference-worker.sb"),
     (EmbeddedInference.mlxLMLock, "mlx-lm-0.31.3.lock"),
   ] {
     #expect(

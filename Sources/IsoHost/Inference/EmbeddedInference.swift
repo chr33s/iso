@@ -3,14 +3,16 @@
 /// The inference gateway's and managed backend's resources, byte-identical
 /// to `Sources/IsoHost/Inference/Resources/` (the test scripts use those files).
 enum EmbeddedInference {
-  /// The `iso-inference` Seatbelt profile; `SeatbeltProfile.inference(backendPorts:)` renders its port rules.
+  /// The `iso-inference` broker's Seatbelt profile (`SeatbeltProfile.inference`).
   static let gatewayProfile = #"""
-    ;; Seatbelt (SBPL) profile confining the host-side iso-inference gateway on
-    ;; macOS (docs/design/secure-local-inference-spec.md §10). Applied by the
-    ;; launcher via `sandbox-exec -p` (Sources/IsoHost/Inference/InferenceController.swift)
+    ;; Seatbelt (SBPL) profile confining the host-side iso-inference broker on
+    ;; macOS (docs/design/secure-local-inference-spec.md §5.1, §10). Applied by
+    ;; the launcher via `sandbox-exec -p` (Sources/IsoHost/Inference/InferenceController.swift)
     ;; and asserted by `iso-inference --jail-selftest`, which refuses to start
-    ;; unless file writes outside STATE_DIR and RELAY_DIR, TCP listeners, program
-    ;; execution and non-loopback egress are denied.
+    ;; unless file writes outside STATE_DIR, TCP listeners, program execution,
+    ;; every network connection and other processes' information are denied.
+    ;; The broker binds no session socket and reaches no backend: each
+    ;; session's worker does, under seatbelt-inference-worker.sb.
     ;;
     ;; This is a separate profile from seatbelt-proxy.sb: the cloud proxy's
     ;; allowance (ports 443 and 53 on any host) is not widened, and this profile
@@ -22,8 +24,8 @@ enum EmbeddedInference {
     ;; must be allowed. No other program can be executed.
     (allow process-exec* (literal (param "INFERENCE_BIN")))
 
-    ;; Reads: system libraries and data, the gateway binary and its state and
-    ;; relay directories. Metadata (stat, not contents) stays readable
+    ;; Reads: system libraries and data, the broker binary and its state
+    ;; directory. Metadata (stat, not contents) stays readable
     ;; everywhere: path canonicalization and dyld need it, and it reveals names
     ;; and sizes only. The root directory itself is read by the runtime at
     ;; startup. Guest strings never become paths.
@@ -38,8 +40,7 @@ enum EmbeddedInference {
       (literal "/dev/random")
       (literal "/dev/urandom")
       (literal (param "INFERENCE_BIN"))
-      (subpath (param "STATE_DIR"))
-      (subpath (param "RELAY_DIR")))
+      (subpath (param "STATE_DIR")))
 
     (allow sysctl-read)
     (allow system-socket)
@@ -52,20 +53,67 @@ enum EmbeddedInference {
     (allow process-info* (target self))
     (allow mach-lookup (global-name "com.apple.system.logger"))
 
-    ;; Writes only under the owner-only state directory: the control socket,
-    ;; startup lock, outstanding-work journal and audit log.
+    ;; Writes only under the owner-only state directory: the control and
+    ;; worker sockets, startup lock, outstanding-work journal and audit log.
+    ;; No TCP listener and no outbound connection of any kind.
     (allow file-write* (subpath (param "STATE_DIR")))
     (allow network-bind (local unix-socket (subpath (param "STATE_DIR"))))
     (allow network-inbound (local unix-socket (subpath (param "STATE_DIR"))))
 
-    ;; Session sockets: one Unix socket per instance in the owner-only relay
-    ;; directory, which the sandbox runtime relays into that instance's guest
-    ;; over vsock (§22). No TCP listener. Outbound: only the configured backend
-    ;; ports, one rule per port, rendered by the launcher in place of the marker
-    ;; below.
-    (allow file-write* (subpath (param "RELAY_DIR")))
-    (allow network-bind (local unix-socket (subpath (param "RELAY_DIR"))))
-    (allow network-inbound (local unix-socket (subpath (param "RELAY_DIR"))))
+    """#
+
+  /// A session worker's Seatbelt profile; `SeatbeltProfile.inferenceWorker(backendPorts:)` renders its port rules.
+  static let workerProfile = #"""
+    ;; Seatbelt (SBPL) profile confining one session's iso-inference worker on
+    ;; macOS (docs/design/secure-local-inference-spec.md §5.1). iso renders it
+    ;; for each session (Sources/IsoHost/Inference/InferenceController.swift)
+    ;; and starts the worker with `sandbox-exec -p`. The worker parses one VM's
+    ;; requests, so it may touch only what that session needs: its own session
+    ;; socket, the broker's worker socket and the backend ports its grants name.
+    ;; `iso-inference --worker --jail-selftest` refuses to start unless writes
+    ;; beside the session socket, TCP listeners, program execution, egress and
+    ;; other processes' information are denied.
+    (version 1)
+    (deny default)
+
+    ;; sandbox-exec execve-replaces itself with the worker binary; that one exec
+    ;; must be allowed. No other program can be executed.
+    (allow process-exec* (literal (param "INFERENCE_BIN")))
+
+    ;; Reads: system libraries and data, and the binary. Metadata stays
+    ;; readable for path resolution.
+    (allow file-read-metadata)
+    (allow file-read*
+      (literal "/")
+      (subpath "/System")
+      (subpath "/usr/lib")
+      (subpath "/usr/share")
+      (subpath "/private/var/db/timezone")
+      (literal "/dev/null")
+      (literal "/dev/random")
+      (literal "/dev/urandom")
+      (literal (param "INFERENCE_BIN")))
+
+    (allow sysctl-read)
+    (allow system-socket)
+    ;; No process information about any other process (`deny default` alone
+    ;; leaves this user's processes readable): the exit watch is kqueue and each
+    ;; connection's peer is its token.
+    (deny process-info*)
+    (allow process-info* (target self))
+    (allow mach-lookup (global-name "com.apple.system.logger"))
+
+    ;; The session socket only: created, restricted and removed by the worker,
+    ;; and the only listener it has. No other file can be written.
+    (allow file-write* (literal (param "SESSION_SOCKET")))
+    (allow network-bind (local unix-socket (literal (param "SESSION_SOCKET"))))
+    (allow network-inbound (local unix-socket (literal (param "SESSION_SOCKET"))))
+
+    ;; The broker's worker socket: admission, audit records and revocation.
+    (allow network-outbound (remote unix-socket (literal (param "BROKER_SOCKET"))))
+
+    ;; Outbound: only the backend ports of this session's grants, one rule per
+    ;; port, rendered in place of the marker below.
     ;; @BACKEND_PORTS@
 
     """#

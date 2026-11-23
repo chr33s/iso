@@ -28,7 +28,7 @@ package final class Gateway: Sendable {
   let journal: Journal
   package let audit: AuditLog
   package let timing: GatewayTiming
-  let normalizers = NormalizerPool(threads: 2)
+  package let normalizers = NormalizerPool(threads: 2)
   /// Live request handlers, for the leak tests and diagnostics.
   package let liveHandlers = Atomic<Int>(0)
   /// Serializes binding and removing session socket files (§22.4).
@@ -45,14 +45,19 @@ package final class Gateway: Sendable {
   /// Where session sockets are bound: the host ends of the instances' vsock
   /// relays (§22). The launch profile allows Unix sockets only here.
   let relayDirectory: String
+  /// The broker's session workers (§5.1): with them, this process binds no
+  /// session socket and parses no guest bytes; each session's worker does.
+  /// nil runs every session in this process (tests).
+  package let workers: WorkerRegistry?
 
   package init(
     group: EventLoopGroup, journal: Journal, audit: AuditLog, limits: GlobalLimits = .defaults,
     relayDirectory: String, backendPorts: Set<UInt16>? = nil,
     timing: GatewayTiming = .standard,
-    sharedConnections: Int = SessionLimits.sharedConnections,
+    sharedConnections: Int = SessionLimits.sharedConnections, workers: WorkerRegistry? = nil,
     onExit: @escaping @Sendable () -> Void
   ) {
+    self.workers = workers
     self.timing = timing
     self.sharedConnections = SlotPool(sharedConnections)
     self.relayDirectory = relayDirectory
@@ -116,6 +121,8 @@ package final class Gateway: Sendable {
     package let socket: String
     package let capability: Secret
     package let policyDigest: String
+    /// The one-time key the session's worker presents (broker only).
+    package var workerKey: Secret? = nil
   }
 
   package func register(_ registration: ControlProtocol.Registration) throws(InferenceError)
@@ -143,18 +150,25 @@ package final class Gateway: Sendable {
       id: randomHex(16), registration: registration, capability: capability,
       registered: ContinuousClock.now,
       failures: FailureWindow(limit: SessionLimits.authFailuresPerMinute))
-    let (listener, socket) = try bind(session, name: registration.socket)
-    do { try adoptBackends(registration.grants) } catch {
-      listener.close(promise: nil)
-      removeSocket(socket)
-      throw error
+    if workers != nil {
+      // The session's worker binds the socket; nothing guest-facing here.
+      try adoptBackends(registration.grants)
+    } else {
+      let (listener, socket) = try bind(session, name: registration.socket)
+      do { try adoptBackends(registration.grants) } catch {
+        listener.close(promise: nil)
+        removeSocket(socket)
+        throw error
+      }
+      session.state.withLock {
+        $0.listener = listener
+        $0.socket = socket
+      }
     }
     scheduler.tighten(registration.limits)
     buffers.tighten(to: scheduler.limits.maxRequestBufferBytes)
-    session.state.withLock {
-      $0.listener = listener
-      $0.socket = socket
-    }
+    let workerKey = workers?.expect(
+      session.id, registration: registration, capability: Secret(token))
     sessions.withLock { $0[session.id] = session }
     scheduler.addSession(session.id)
     audit.record(
@@ -165,9 +179,11 @@ package final class Gateway: Sendable {
         "policy_digest": .string(session.policyDigest),
         "transport_kind": .string(registration.transport.rawValue),
       ])
-    return Registered(
+    var registered = Registered(
       sessionID: session.id, socket: registration.socket, capability: Secret(token),
       policyDigest: session.policyDigest)
+    registered.workerKey = workerKey
+    return registered
   }
 
   /// Binds the session socket (`0600`) and records which file it is, so
@@ -180,7 +196,7 @@ package final class Gateway: Sendable {
       let listener: Channel
       do {
         listener = try SessionListener.bind(
-          gateway: self, session: session, path: path, group: group
+          host: self, session: session, path: path, group: group
         ).wait()
       } catch {
         return .failure(InferenceError(.backendUnavailable, "cannot bind a session socket"))
@@ -198,16 +214,6 @@ package final class Gateway: Sendable {
   /// Unlinks the session's socket file if it is still the one it bound.
   func removeSocket(_ socket: BoundSocket) {
     sockets.withLock { _ in socket.removeIfUnchanged() }
-  }
-
-  /// Session sockets a previous gateway process left behind. Run at startup,
-  /// under the startup lock, before any registration: only this gateway
-  /// binds sockets in the relay directory.
-  package func removeStaleSessionSockets() {
-    guard let names = try? listDirectory(relayDirectory) else { return }
-    for name in names where ControlProtocol.Registration.isSocketName(name) {
-      BoundSocket.removeStale(relayDirectory + "/" + name)
-    }
   }
 
   /// Backends must be in the launch profile's port list, and a port already
@@ -266,7 +272,7 @@ package final class Gateway: Sendable {
     return (result, nil)
   }
 
-  func backendPolicy(_ id: BackendID) -> BackendPolicy? { backends.withLock { $0[id] } }
+  package func backendPolicy(_ id: BackendID) -> BackendPolicy? { backends.withLock { $0[id] } }
 
   package func activate(_ activation: ControlProtocol.Activation) throws(InferenceError) {
     guard activation.epoch == epoch else {
@@ -276,52 +282,26 @@ package final class Gateway: Sendable {
       session.phase == .inactive
     else { throw InferenceError(.sessionRevoked, "no inactive session with that id") }
     let binding = activation.transport
-    let ownerPID = session.boot.ownerPID
-    switch session.transportKind {
-    case .owner:
-      // The transport is the registration's sandbox owner (§22.4).
-      guard binding.pid == ownerPID else {
-        throw InferenceError(.policyDenied, "the transport is not the registered sandbox owner")
+    if let workers {
+      // The worker binds its socket and transport; the broker records the
+      // session as active once it answers.
+      try session.checkTransportKind(binding)
+      guard let link = workers.readyLink(session.id) else {
+        throw InferenceError(.backendUnavailable, "the session's worker did not start")
       }
-    case .forward:
-      // The host's reverse forward (§22.9), a process other than the owner.
-      guard binding.pid != ownerPID else {
-        throw InferenceError(.policyDenied, "a forward session's transport is not the owner")
+      try link.activate(
+        binding, deadlineSeconds: activation.deadlineSeconds, timeout: workers.attachTimeout)
+      guard session.markActive(binding, deadlineSeconds: activation.deadlineSeconds) else {
+        throw InferenceError(.sessionRevoked, "the session was revoked")
       }
-    }
-    // The bound process and, for a forward session, the registration's
-    // sandbox owner: either exit revokes the session. The host checked their
-    // identity; the gateway reads no other process's information, and binds
-    // each connection to the transport by its peer token instead.
-    let watched = session.transportKind == .owner ? [binding.pid] : [binding.pid, ownerPID]
-    var watches: [ExitWatch] = []
-    for pid in watched {
-      let watch = ExitWatch(pid: pid) { [weak self, weak session] in
+    } else {
+      try session.bindTransport(binding, deadlineSeconds: activation.deadlineSeconds) {
+        [weak self, weak session] pid in
         guard let self, let session else { return }
         self.audit.record(
           "transport_exited", ["session": .string(session.id), "pid": .int(Int64(pid))])
         self.revoke(session, reason: "transport-exited")
       }
-      // A process that already exited cannot be watched: nothing is bound,
-      // and the registration stays inactive for the host to revoke.
-      guard let watch else {
-        for watch in watches { watch.cancel() }
-        throw InferenceError(.policyDenied, "the transport process exited")
-      }
-      watches.append(watch)
-    }
-    let deadline = activation.deadlineSeconds.map { ContinuousClock.now + .seconds($0) }
-    let activated = session.state.withLock { state -> Bool in
-      guard state.phase == .inactive else { return false }
-      state.phase = .active
-      state.transport = binding
-      state.deadline = deadline
-      state.watches = watches
-      return true
-    }
-    guard activated else {
-      for watch in watches { watch.cancel() }
-      throw InferenceError(.sessionRevoked, "the session was revoked")
     }
     audit.record(
       "session_activated",
@@ -361,6 +341,7 @@ package final class Gateway: Sendable {
     guard let (listener, watches, socket, channels) = taken else { return }
     sessions.withLock { _ = $0.removeValue(forKey: session.id) }
     for watch in watches { watch.cancel() }
+    workers?.revoke(session.id, reason: reason)
     scheduler.removeSession(session.id, reason: .sessionRevoked)
     listener?.close(promise: nil)
     // Removed only while it is still this session's file: a registration
@@ -368,6 +349,31 @@ package final class Gateway: Sendable {
     if let socket { removeSocket(socket) }
     for channel in channels { channel.close(promise: nil) }
     audit.record("session_revoked", ["session": .string(session.id), "reason": .string(reason)])
+  }
+
+  /// A worker's link closed: the work it still held has no evidence and
+  /// quarantines its backend, and its session ends.
+  func workerExited(_ link: WorkerLink, holding held: [(Scheduler.Ticket, BackendID)]) {
+    let active = Set(scheduler.activeTickets(session: link.session))
+    for (ticket, backend) in held where active.contains(ticket) {
+      scheduler.markUncertain(ticket)
+      audit.record(
+        "backend_quarantined",
+        [
+          "backend": .int(Int64(backend.port)), "reason": .string("uncertain-cancellation"),
+          "detail": .string("worker-exited"),
+        ])
+    }
+    if let session = sessions.withLock({ $0[link.session] }) {
+      revoke(session, reason: "worker-exited")
+    }
+    workers?.remove(link.session, link: link)
+  }
+
+  /// The worker revoked its session itself (its transport exited).
+  func revokeFromWorker(_ id: String, reason: String) {
+    guard let session = sessions.withLock({ $0[id] }) else { return }
+    revoke(session, reason: reason)
   }
 
   package func requalify(_ backend: BackendID) throws(InferenceError) {
@@ -405,9 +411,10 @@ package final class Gateway: Sendable {
       .filter { instance == nil || $0.instance == instance }
       .sorted { $0.id < $1.id }
     let sessionList: [JSON] = live.map { session in
-      let (phase, socket, transport, deadline) = session.state.withLock {
-        ($0.phase, $0.socket?.path, $0.transport, $0.deadline)
+      let (phase, transport, deadline) = session.state.withLock {
+        ($0.phase, $0.transport, $0.deadline)
       }
+      let worker = workers?.info(session.id)
       return .object(
         JSONObject([
           "session_id": .string(session.id), "state": .string(phase.name),
@@ -416,7 +423,9 @@ package final class Gateway: Sendable {
               "data_root": .string(session.instance.dataRoot),
               "name": .string(session.instance.name),
             ])),
-          "socket": socket.map { .string(String($0.split(separator: "/").last ?? "")) } ?? .null,
+          "socket": .string(session.socketName),
+          "worker": worker.map { .string($0.state) } ?? .null,
+          "worker_pid": worker?.pid.map { .int(Int64($0)) } ?? .null,
           "nonce": .string(session.nonce),
           "policy_digest": .string(session.policyDigest),
           "aliases": .array(session.grants.keys.sorted().map(JSON.string)),
@@ -512,9 +521,9 @@ package enum SessionListener {
     }
   }
 
-  static func bind(gateway: Gateway, session: GatewaySession, path: String, group: EventLoopGroup)
-    -> EventLoopFuture<Channel>
-  {
+  static func bind(
+    host: any RequestServices, session: GatewaySession, path: String, group: EventLoopGroup
+  ) -> EventLoopFuture<Channel> {
     ServerBootstrap(group: group)
       .serverChannelOption(ChannelOptions.backlog, value: backlog(session.transportKind))
       .childChannelOption(ChannelOptions.autoRead, value: true)
@@ -526,7 +535,7 @@ package enum SessionListener {
         // token of every connection must name it, as this user.
         PeerIdentity.of(channel).flatMapThrowing { peer in
           guard let peer, session.admits(peer) else {
-            gateway.audit.rejected(session: session.id, code: .policyDenied)
+            host.auditService.rejected(session: session.id, code: .policyDenied)
             throw InferenceError(.policyDenied, "the connection is not from the bound transport")
           }
           var limits = NIOHTTPDecoderLimitConfiguration()
@@ -541,11 +550,20 @@ package enum SessionListener {
             ByteToMessageHandler(
               HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes, limitConfiguration: limits)),
             RequestHandler(
-              gateway: gateway, session: session, wireBudget: wireBudget,
+              host: host, session: session, wireBudget: wireBudget,
               eventLoop: channel.eventLoop),
           ])
         }
       }
       .bind(unixDomainSocketPath: path, cleanupExistingSocketFile: true)
+  }
+}
+
+extension Gateway: RequestServices {
+  package var admission: any AdmissionService { scheduler }
+  package var journalService: any JournalService { journal }
+  package var auditService: any AuditService { audit }
+  package func handlerCount(_ delta: Int) {
+    liveHandlers.add(delta, ordering: .relaxed)
   }
 }

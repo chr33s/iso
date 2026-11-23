@@ -12,6 +12,19 @@ import Darwin
 package enum JailProbes {
   package static func isDenial(_ code: Int32) -> Bool { code == EPERM || code == EACCES }
 
+  /// Whether another process's information is readable: launchd's executable
+  /// path (`proc_pidpath(1)`), which any unconfined process of this user,
+  /// and one under `deny default` alone, can read. A profile that denies
+  /// `process-info*` refuses it.
+  package static func readsOtherProcesses() -> Bool {
+    var buffer = [UInt8](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    // proc_pidpath writes at most `buffer.count` bytes into the buffer borrowed here.
+    let length = buffer.withUnsafeMutableBytes { raw in
+      unsafe proc_pidpath(1, raw.baseAddress, UInt32(raw.count))
+    }
+    return length > 0
+  }
+
   /// Sets the core-dump limit to zero; false when that fails.
   package static func disableCoreDumps() -> Bool {
     var limit = rlimit(rlim_cur: 0, rlim_max: 0)

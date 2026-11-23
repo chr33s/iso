@@ -78,7 +78,7 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   for message in [unknown, version, oldest, op] {
     #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(message) }
   }
-  #expect(ControlProtocol.version == 5)
+  #expect(ControlProtocol.version == 6)
   // A registration names its transport kind, one of the two.
   let registered = ControlProtocol.encode(.register(registration([grant(.openAIChat)])))
   var noKind = registered

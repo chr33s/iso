@@ -1,0 +1,51 @@
+;; Seatbelt (SBPL) profile confining one session's iso-inference worker on
+;; macOS (docs/design/secure-local-inference-spec.md §5.1). iso renders it
+;; for each session (Sources/IsoHost/Inference/InferenceController.swift)
+;; and starts the worker with `sandbox-exec -p`. The worker parses one VM's
+;; requests, so it may touch only what that session needs: its own session
+;; socket, the broker's worker socket and the backend ports its grants name.
+;; `iso-inference --worker --jail-selftest` refuses to start unless writes
+;; beside the session socket, TCP listeners, program execution, egress and
+;; other processes' information are denied.
+(version 1)
+(deny default)
+
+;; sandbox-exec execve-replaces itself with the worker binary; that one exec
+;; must be allowed. No other program can be executed.
+(allow process-exec* (literal (param "INFERENCE_BIN")))
+
+;; Reads: system libraries and data, and the binary. Metadata stays
+;; readable for path resolution.
+(allow file-read-metadata)
+(allow file-read*
+  (literal "/")
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/private/var/db/timezone")
+  (literal "/dev/null")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+  (literal (param "INFERENCE_BIN")))
+
+(allow sysctl-read)
+(allow system-socket)
+;; No process information about any other process (`deny default` alone
+;; leaves this user's processes readable): the exit watch is kqueue and each
+;; connection's peer is its token.
+(deny process-info*)
+(allow process-info* (target self))
+(allow mach-lookup (global-name "com.apple.system.logger"))
+
+;; The session socket only: created, restricted and removed by the worker,
+;; and the only listener it has. No other file can be written.
+(allow file-write* (literal (param "SESSION_SOCKET")))
+(allow network-bind (local unix-socket (literal (param "SESSION_SOCKET"))))
+(allow network-inbound (local unix-socket (literal (param "SESSION_SOCKET"))))
+
+;; The broker's worker socket: admission, audit records and revocation.
+(allow network-outbound (remote unix-socket (literal (param "BROKER_SOCKET"))))
+
+;; Outbound: only the backend ports of this session's grants, one rule per
+;; port, rendered in place of the marker below.
+;; @BACKEND_PORTS@

@@ -431,18 +431,6 @@ extension GatewayTests {
     #expect(FileManager.default.fileExists(atPath: second.socket))
   }
 
-  @Test func staleSessionSocketsAreRemovedAtStartup() throws {
-    let harness = try Harness()
-    let stale = harness.relayDirectory + "/" + Harness.socketName("old")
-    let fd = RawClient.listen(stale)
-    close(fd)
-    let other = harness.relayDirectory + "/notes.txt"
-    try Data().write(to: URL(fileURLWithPath: other))
-    harness.gateway.removeStaleSessionSockets()
-    #expect(!FileManager.default.fileExists(atPath: stale))
-    #expect(FileManager.default.fileExists(atPath: other))
-  }
-
   /// A registration refused on one grant adopts none of its backends.
   @Test func backendAdoptionIsAllOrNothing() throws {
     let backend = try FakeBackend(.stream(chatEvents))

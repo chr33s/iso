@@ -21,7 +21,9 @@ layers are:
   host parsers. CI runs a bounded smoke; longer campaigns are manual.
 - **Inference gateway gates** (`mise run check-inference`) —
   `scripts/test-inference-gateway-process.py` runs the built `iso-inference`
-  under its Seatbelt profile, and `tests/test-inference-launcher.py` runs the
+  broker and its session workers, each under its own Seatbelt profile (the
+  broker reaches no backend port; a worker reaches the broker's socket and
+  no other session's, and replaces a stale socket at its path), and `tests/test-inference-launcher.py` runs the
   managed-backend launcher. CI gate (credential-proxy job); also run by
   `scripts/preflight-release.sh` and `build-release.py --test`.
 - **Integration tests** — real Apple Containerization VMs. Manual; run for

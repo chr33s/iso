@@ -53,7 +53,20 @@ SPDX-License-Identifier: Apache-2.0
   connections at once, refused for brokered sandboxes), and `inspect`
   reports it. iso requires protocol 6. In the guest, a systemd socket on
   `127.0.0.1:11788` bridges to the relayed socket.
-- **Gateway control protocol 5:** `register_session` declares the session's
+- **One worker process per inference session.** `iso-inference` is now a
+  broker that keeps the scheduler, journal, audit log and control socket,
+  and parses no guest bytes. iso starts one `iso-inference --worker` per
+  session, under a Seatbelt profile rendered for it: only that session's
+  socket, the broker's worker socket and its grants' backend ports. A
+  one-time key from the registration (control protocol 6) reaches it on
+  stdin. The broker admits a worker's work for its own session only, and a
+  worker that exits with work outstanding quarantines the backend. A
+  request that compromises one worker no longer reaches another VM's
+  requests, capability or socket. `iso inference status` reports each
+  session's worker and its PID. The broker's own profile allows no network
+  connection and no write in the relay directory; a worker replaces a
+  stale socket at its path when it starts.
+- **Gateway control protocol 5 (now 6):** `register_session` declares the session's
   transport kind. `owner` (vmnet) activates bound to the registered sandbox
   owner; `forward` (brokered) activates bound to another process, which iso
   checks is this user's `/usr/bin/ssh`, while the owner still runs, and is

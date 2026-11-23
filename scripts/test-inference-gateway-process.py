@@ -32,6 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "Sources/IsoHost/Inference/Resources/seatbelt-inference.sb"
+WORKER_PROFILE = ROOT / "Sources/IsoHost/Inference/Resources/seatbelt-inference-worker.sb"
 failures = []
 
 
@@ -201,13 +202,10 @@ def main():
     backend = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
     threading.Thread(target=backend.serve_forever, daemon=True).start()
     backend_port = backend.server_address[1]
-    # The launcher renders one outbound rule per backend port (§20.5).
-    profile_text = Path(args.profile).read_text().replace(
-        ";; @BACKEND_PORTS@", f'(allow network-outbound (remote ip "localhost:{backend_port}"))')
-    profile_path = state.parent / (state.name + ".sb")
-    profile_path.write_text(profile_text)
+    # The broker's profile is used as is: it names no backend port (§20.5).
+    profile_path = Path(args.profile)
     confined = ["/usr/bin/sandbox-exec", "-D", f"INFERENCE_BIN={binary}", "-D", f"STATE_DIR={state}",
-                "-D", f"RELAY_DIR={relay}", "-f", str(profile_path), binary, "--state-dir", str(state),
+                "-f", str(profile_path), binary, "--state-dir", str(state),
                 "--relay-dir", str(relay),
                 "--backend-port", str(backend_port)]
 
@@ -222,11 +220,6 @@ def main():
     check("a group- or world-readable state directory is refused", wide.returncode == 1)
     os.chmod(state, 0o700)
 
-    # A session socket left by a crashed gateway is removed at startup.
-    stale = relay / "0123456789abcdef.sock"
-    leftover = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    leftover.bind(str(stale))
-    leftover.close()
     gateway = subprocess.Popen(confined, stderr=subprocess.PIPE)
     for _ in range(100):
         if (state / "control.sock").exists():
@@ -234,9 +227,35 @@ def main():
         time.sleep(0.05)
     mode = stat.S_IMODE(os.stat(state / "control.sock").st_mode)
     check("the control socket is owner-only (0600)", mode == 0o600)
-    check("a stale session socket is removed at startup", not stale.exists())
     second = subprocess.run(confined, capture_output=True, timeout=30)
     check("a second gateway exits on the startup lock (status 3)", second.returncode == 3)
+    check("the broker serves an owner-only worker socket",
+          stat.S_IMODE(os.stat(state / "workers.sock").st_mode) == 0o600)
+
+    # One session's worker, as iso starts it: its own rendered profile,
+    # the one-time key on stdin (§5.1).
+    def worker_command(socket_path, session_id, ports=(backend_port,), program=None, extra=()):
+        rules = "\n".join(f'(allow network-outbound (remote ip "localhost:{port}"))' for port in ports)
+        text = WORKER_PROFILE.read_text().replace(";; @BACKEND_PORTS@", rules)
+        path = state.parent / (state.name + f"-{session_id[:8]}.sb")
+        path.write_text(text)
+        target = program or [binary, "--worker", "--broker", str(state / "workers.sock"),
+                             "--socket", str(socket_path), "--session", session_id, *extra]
+        return ["/usr/bin/sandbox-exec", "-D", f"INFERENCE_BIN={program[0] if program else binary}",
+                "-D", f"SESSION_SOCKET={socket_path}", "-D", f"BROKER_SOCKET={state / 'workers.sock'}",
+                "-f", str(path), *target]
+
+    def start_worker(session, key=None):
+        socket_path = relay / session["socket"]
+        process = subprocess.Popen(worker_command(socket_path, session["session_id"]),
+                                   stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        process.stdin.write(((key or session["worker_key"]) + "\n").encode())
+        process.stdin.close()
+        for _ in range(100):
+            if socket_path.exists() or process.poll() is not None:
+                break
+            time.sleep(0.05)
+        return process
 
     # The sandbox owner and another process of this user that is not it.
     owner = Carrier()
@@ -249,7 +268,7 @@ def main():
                "max_input_bytes": 1048576, "max_request_body_bytes": 4194304, "token_counter": "none"}
     def registration(port, name="dev", socket="8e84b04d471a546a.sock", transport="owner"):
         return {
-            "version": 5, "op": "register_session", "instance": {"data_root": "/x", "name": name},
+            "version": 6, "op": "register_session", "instance": {"data_root": "/x", "name": name},
             "boot": {"owner_pid": owner.pid, "owner_start": process_start(owner.pid)},
             "nonce": "0" * 32,
             "socket": socket, "transport": transport,
@@ -264,13 +283,48 @@ def main():
     outside = control(state, registration(backend_port + 1 if backend_port < 65535 else 1024))
     check("a backend port outside the launch list is refused", outside.get("ok") is False)
     registered = control(state, registration(backend_port))
-    check("registration succeeds", registered.get("ok") is True)
+    check("registration succeeds and names a worker key",
+          registered.get("ok") is True and len(registered.get("worker_key", "")) == 64)
     session_socket, token = relay / registered["socket"], registered["capability"]
+    check("the broker binds no session socket", not session_socket.exists())
+    probe_broker = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-D", "INFERENCE_BIN=/usr/bin/nc", "-D", f"STATE_DIR={state}",
+         "-f", str(profile_path), "/usr/bin/nc", "-z", "-w", "1",
+         "127.0.0.1", str(backend_port)], capture_output=True, timeout=30)
+    check("the broker's profile reaches no backend port", probe_broker.returncode != 0)
+    probe = worker_command(session_socket, registered["session_id"], extra=["--jail-selftest"])
+    check("the worker's jail self-test passes under its profile",
+          subprocess.run(probe, capture_output=True, timeout=30).returncode == 0)
+    unconfined_worker = subprocess.run(
+        [binary, "--worker", "--broker", str(state / "workers.sock"), "--socket", str(session_socket),
+         "--session", registered["session_id"]], input=b"0" * 64 + b"\n", capture_output=True,
+        timeout=30)
+    check("an unconfined worker refuses to start", unconfined_worker.returncode == 1)
+    wrong_key = start_worker(registered, key="1" * 64)
+    check("a worker with the wrong key is refused", wrong_key.wait(timeout=10) != 0
+          and not session_socket.exists())
+    # A session socket left by a crashed worker: the next worker replaces it.
+    leftover = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    leftover.bind(str(session_socket))
+    leftover.close()
+    stale_inode = os.stat(session_socket).st_ino
+    worker = start_worker(registered)
+    for _ in range(100):
+        if session_socket.exists() and os.stat(session_socket).st_ino != stale_inode:
+            break
+        time.sleep(0.05)
+    check("the worker binds the session socket, replacing a stale one",
+          session_socket.exists() and os.stat(session_socket).st_ino != stale_inode)
+    second_worker = start_worker(registered)
+    check("a second worker for the session is refused", second_worker.wait(timeout=10) != 0)
+    state_after = control(state, {"version": 6, "op": "inspect"})["sessions"][0]
+    check("the broker reports the worker ready, by pid",
+          state_after.get("worker") == "ready" and state_after.get("worker_pid") == worker.pid)
     check("the session socket is owner-only (0600) in the relay directory",
           stat.S_IMODE(os.stat(session_socket).st_mode) == 0o600)
-    listeners = subprocess.run(["/usr/sbin/lsof", "-nP", "-a", "-p", str(gateway.pid), "-iTCP",
-                                "-sTCP:LISTEN", "-t"], capture_output=True, text=True).stdout.strip()
-    check("the gateway listens on no TCP port", listeners == "")
+    listeners = subprocess.run(["/usr/sbin/lsof", "-nP", "-a", "-p", f"{gateway.pid},{worker.pid}",
+                                "-iTCP", "-sTCP:LISTEN", "-t"], capture_output=True, text=True).stdout.strip()
+    check("neither the broker nor the worker listens on a TCP port", listeners == "")
     traversal = dict(registration(backend_port), socket="../escape.sock")
     check("a session socket name outside the relay directory is refused",
           control(state, traversal).get("ok") is False)
@@ -280,7 +334,7 @@ def main():
 
     def activation(carrier, session=None, **extra):
         session = session or registered
-        return {"version": 5, "op": "activate_session", "session_id": session["session_id"],
+        return {"version": 6, "op": "activate_session", "session_id": session["session_id"],
                 "epoch": session["epoch"], "transport": carrier.binding(), **extra}
 
     version_two = dict(registration(backend_port, name="old", socket="0123.sock"), version=2)
@@ -312,6 +366,15 @@ def main():
     forwarded = control(state, registration(
         backend_port, name="brokered", socket="0abc.sock", transport="forward"))
     check("a forward registration succeeds", forwarded.get("ok") is True)
+    forward_worker = start_worker(forwarded)
+    # Each worker's profile admits only its own session socket: one worker
+    # cannot reach the other's (nc stands in for a compromised worker).
+    reach = lambda own, other: subprocess.run(
+        worker_command(own, "c" * 32, program=["/usr/bin/nc", "-U", "-w", "1", str(other)]),
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=30).returncode
+    check("a worker's profile refuses another session's socket",
+          reach(session_socket, relay / forwarded["socket"]) != 0)
+    check("but reaches the broker's worker socket", reach(session_socket, state / "workers.sock") == 0)
     forward = Carrier()
     time.sleep(0.5)
     check("forward activation refuses the sandbox owner",
@@ -325,14 +388,26 @@ def main():
           owner.request(forward_socket, forwarded["capability"], body) == 0)
     forward.kill()
     time.sleep(1.5)
-    live = [s["session_id"] for s in control(state, {"version": 5, "op": "inspect"})["sessions"]]
+    live = [s["session_id"] for s in control(state, {"version": 6, "op": "inspect"})["sessions"]]
     check("the forward's exit revokes its session", forwarded["session_id"] not in live
           and registered["session_id"] in live)
 
+    check("the forward's worker exits with its session", forward_worker.wait(timeout=30) == 0)
+
     owner.kill()
     time.sleep(1.5)
-    sessions = control(state, {"version": 5, "op": "inspect"})["sessions"]
+    sessions = control(state, {"version": 6, "op": "inspect"})["sessions"]
     check("the sandbox owner's exit revokes the session", sessions == [])
+    check("and its worker exits", worker.wait(timeout=30) == 0)
+
+    # A worker that dies takes its session with it.
+    crashing = control(state, registration(backend_port, name="crash", socket="0def.sock"))
+    crash_worker = start_worker(crashing)
+    crash_worker.kill()
+    crash_worker.wait()
+    time.sleep(0.5)
+    live = [s["session_id"] for s in control(state, {"version": 6, "op": "inspect"})["sessions"]]
+    check("a worker's exit revokes its session", crashing["session_id"] not in live)
     try:
         http(session_socket, token, body)
         refused = False
@@ -341,7 +416,7 @@ def main():
     check("a revoked session's socket refuses connections", refused)
     check("revocation removes the session socket file", not session_socket.exists())
 
-    busy = control(state, {"version": 5, "op": "shutdown", "force": False})
+    busy = control(state, {"version": 6, "op": "shutdown", "force": False})
     check("shutdown succeeds with no sessions", busy.get("ok") is True)
     gateway.wait(timeout=10)
     check("the gateway exits cleanly", gateway.returncode == 0)

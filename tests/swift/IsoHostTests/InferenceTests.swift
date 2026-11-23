@@ -70,19 +70,30 @@ private let session = InferenceSession(sessionID: "s", epoch: "e", services: [])
   let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appending(path: "../../../Sources/IsoHost/Inference/Resources/seatbelt-inference.sb")
     .standardized.path
-  #expect(SeatbeltProfile.inferenceTemplate == (try #require(readFile(path))))
-  let profile = SeatbeltProfile.inference(backendPorts: [18081, 18080])
+  let profile = SeatbeltProfile.inference
+  #expect(profile == (try #require(readFile(path))))
   #expect(profile.contains("(deny default)"))
   #expect(profile.contains(#"(allow process-exec* (literal (param "INFERENCE_BIN")))"#))
   #expect(profile.contains(#"(allow file-write* (subpath (param "STATE_DIR")))"#))
   // Reads are narrowed; no blanket file-read*.
   #expect(!profile.contains("(allow file-read*)\n"))
-  // Outbound only to the listed backend ports; no 443/53, no wildcard port.
-  #expect(profile.contains(#"(allow network-outbound (remote ip "localhost:18080"))"#))
-  #expect(profile.contains(#"(allow network-outbound (remote ip "localhost:18081"))"#))
-  #expect(!profile.contains(#"(remote ip "localhost:*")"#))
-  #expect(!profile.contains("*:443") && !profile.contains("*:53"))
-  #expect(!SeatbeltProfile.inference(backendPorts: []).contains("network-outbound"))
+  // The broker reaches no backend and binds no session socket (§5.1): no
+  // outbound rule, no port marker and nothing in the relay directory.
+  #expect(!profile.contains("network-outbound"))
+  #expect(!profile.contains(SeatbeltProfile.backendPortsMarker))
+  #expect(!profile.contains("RELAY_DIR"))
+  #expect(profile.contains("(deny process-info*)"))
+  // A session worker reaches only its grants' backend ports and the broker.
+  let worker = SeatbeltProfile.inferenceWorker(backendPorts: [18081, 18080, 18080])
+  #expect(worker.contains(#"(allow network-outbound (remote ip "localhost:18080"))"#))
+  #expect(worker.contains(#"(allow network-outbound (remote ip "localhost:18081"))"#))
+  #expect(worker.components(separatedBy: "localhost:18080").count == 2, "one rule per port")
+  #expect(worker.contains(#"(remote unix-socket (literal (param "BROKER_SOCKET")))"#))
+  #expect(worker.contains(#"(allow file-write* (literal (param "SESSION_SOCKET")))"#))
+  #expect(!worker.contains(#"(remote ip "localhost:*")"#))
+  #expect(!worker.contains("*:443") && !worker.contains("*:53"))
+  #expect(worker.contains("(deny process-info*)"))
+  #expect(!SeatbeltProfile.inferenceWorker(backendPorts: []).contains("remote ip"))
 }
 
 @Test func requiredModeWithholdsEveryProviderCredential() throws {
