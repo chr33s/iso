@@ -41,6 +41,9 @@ import Testing
   do {
     // The probe and request paths both take the client's context.
     for provider in Provider.allCases { try await upstream.probeTLS(provider: provider) }
+    // The client side completes before the server reads its Finished message,
+    // so the server-side count can trail `probeTLS` returning.
+    try await waitForHandshakes(handshakes, atLeast: 2)
     #expect(handshakes.withLockedValue { $0 } == 2)
     let guest = try await ClientBootstrap(group: group).channelInitializer { channel in
       guests.add(channel)
@@ -52,10 +55,7 @@ import Testing
           "POST /v1/messages HTTP/1.1\r\nAuthorization: Bearer \(token)\r\nContent-Length: 0\r\n\r\n"
       )
     ).get()
-    let deadline = ContinuousClock.now + .seconds(5)
-    while handshakes.withLockedValue({ $0 }) < 3, ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    try await waitForHandshakes(handshakes, atLeast: 3)
     #expect(handshakes.withLockedValue { $0 } == 3, "forwarded request did not use the context")
     // The default context still verifies against system trust only.
     await #expect(throws: (any Error).self) { try await system.probeTLS(provider: .anthropic) }
@@ -70,6 +70,15 @@ import Testing
   await peers.closeAll()
   try await provider.close().get()
   try await group.shutdownGracefully()
+}
+
+private func waitForHandshakes(_ handshakes: NIOLockedValueBox<Int>, atLeast count: Int)
+  async throws
+{
+  let deadline = ContinuousClock.now + .seconds(5)
+  while handshakes.withLockedValue({ $0 }) < count, ContinuousClock.now < deadline {
+    try await Task.sleep(for: .milliseconds(10))
+  }
 }
 
 private final class HandshakeCounter: ChannelInboundHandler {
