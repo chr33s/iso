@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import IsoProxyCore
 
@@ -8,6 +9,7 @@ enum Jail {
   enum Failure: Error, CustomStringConvertible {
     case coreLimit, fileWriteAllowed, stateWriteDenied, tcpListenAllowed, execAllowed
     case egressAllowed, unlistedPortAllowed, loopbackDenied, homeReadAllowed
+    case processInfoAllowed
 
     var description: String {
       switch self {
@@ -20,6 +22,7 @@ enum Jail {
       case .unlistedPortAllowed: "a loopback port outside the backend list is allowed"
       case .loopbackDenied: "loopback connections to a backend port are denied"
       case .homeReadAllowed: "reading the home directory is allowed"
+      case .processInfoAllowed: "reading another process's information is allowed"
       }
     }
   }
@@ -55,6 +58,18 @@ enum Jail {
       throw Failure.loopbackDenied
     }
     guard JailProbes.isDenial(JailProbes.homeReadError()) else { throw Failure.homeReadAllowed }
+    // launchd's path is readable to any unconfined process of this user.
+    guard executablePath(1) == nil else { throw Failure.processInfoAllowed }
+  }
+
+  /// `proc_pidpath`; nil when it fails.
+  static func executablePath(_ pid: pid_t) -> String? {
+    var buffer = [UInt8](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    // proc_pidpath writes at most `buffer.count` bytes into the buffer borrowed here.
+    let length = buffer.withUnsafeMutableBytes { raw in
+      unsafe proc_pidpath(pid, raw.baseAddress, UInt32(raw.count))
+    }
+    return length > 0 ? String(decoding: buffer.prefix(Int(length)), as: UTF8.self) : nil
   }
 
   private static func denied(_ host: String, port: UInt16) -> Bool {

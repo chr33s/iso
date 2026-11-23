@@ -28,7 +28,7 @@ package final class GatewaySession: Sendable {
     var transport: TransportBinding?
     var deadline: ContinuousClock.Instant?
     /// Exit watches on the bound process and, for a forward, the owner.
-    var watches: [DispatchSourceProcess] = []
+    var watches: [ExitWatch] = []
     var listener: Channel?
     var socket: BoundSocket?
     var channels: [ObjectIdentifier: Channel] = [:]
@@ -81,6 +81,15 @@ package final class GatewaySession: Sendable {
       guard state.phase == .active else { return false }
       if let deadline = state.deadline, instant >= deadline { return false }
       return true
+    }
+  }
+
+  /// Whether a connection's peer is the active session's bound transport,
+  /// running as this user (§12.3). Before activation nothing is admitted.
+  func admits(_ peer: PeerIdentity) -> Bool {
+    state.withLock { state in
+      guard state.phase == .active, let binding = state.transport else { return false }
+      return peer.isProcess(binding, uid: getuid())
     }
   }
 

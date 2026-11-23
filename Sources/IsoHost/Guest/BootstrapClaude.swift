@@ -299,7 +299,23 @@ enum ClaudeSettings {
     .object(.init(MCPServer.sorted(env).map { ($0, .string($1)) }))
   }
 
-  static func managedDefaults(_ localEnv: [String: String]) -> String {
+  /// The `apiKeyHelper` iso sets for a guarded inference session: it prints
+  /// the capability iso wrote into the guest, so the host keeps no copy.
+  static let inferenceKeyHelper =
+    "cat \"$HOME/\(GuestHomeFile.inferenceToken.rawValue)\""
+
+  /// Sets iso's key helper when `keyHelper` is given, and otherwise removes
+  /// it only where it is still iso's, so a stale one never sends the
+  /// capability after the mode changes.
+  static func applyKeyHelper(_ root: inout OrderedJSON.Members, _ keyHelper: String?) {
+    if let keyHelper {
+      root.insert("apiKeyHelper", .string(keyHelper))
+    } else if root["apiKeyHelper"] == .string(inferenceKeyHelper) {
+      root.remove("apiKeyHelper")
+    }
+  }
+
+  static func managedDefaults(_ localEnv: [String: String], keyHelper: String? = nil) -> String {
     var members = OrderedJSON.Members([
       (
         "permissions",
@@ -311,13 +327,16 @@ enum ClaudeSettings {
       )
     ])
     if !localEnv.isEmpty { members["env"] = envJSON(localEnv) }
+    applyKeyHelper(&members, keyHelper)
     return OrderedJSON.object(members).compact
   }
 
   /// Force the managed keys into an existing body, keeping every other key
   /// (plugin and marketplace state) and its order. The `env` block is
   /// iso's: replaced in local/proxy mode, removed otherwise.
-  static func merge(_ existing: String, localEnv: [String: String]) throws -> String {
+  static func merge(_ existing: String, localEnv: [String: String], keyHelper: String? = nil)
+    throws -> String
+  {
     var root: OrderedJSON.Members
     if existing.trimmingUnicodeWhitespace().isEmpty {
       root = .init()
@@ -343,21 +362,22 @@ enum ClaudeSettings {
     } else {
       root.insert("env", envJSON(localEnv))
     }
+    applyKeyHelper(&root, keyHelper)
     return OrderedJSON.object(root).compact
   }
 
   static func withImport(
     _ existing: Result<String, any Error>, localEnv: [String: String],
-    imported: ClaudeImport.Preferences, diagnostics: Diagnostics
+    keyHelper: String? = nil, imported: ClaudeImport.Preferences, diagnostics: Diagnostics
   ) throws -> String {
     let merged: String
     do {
-      merged = try merge(try existing.get(), localEnv: localEnv)
+      merged = try merge(try existing.get(), localEnv: localEnv, keyHelper: keyHelper)
     } catch {
       diagnostics.warn(
         "Could not read or merge existing ~/.claude/settings.json (\(oneLine(error))); replacing it with managed defaults"
       )
-      merged = managedDefaults(localEnv)
+      merged = managedDefaults(localEnv, keyHelper: keyHelper)
     }
     return try ClaudeImport.mergePreferences(merged, imported)
   }
@@ -404,7 +424,8 @@ extension AgentBootstrap {
         } else {
           // No session: settings that reach no model, never the cloud.
           try writeManagedClaudeSettings(
-            session.target, localEnv: claudeInferenceEnv(nil), imported: prepared?.preferences)
+            session.target, localEnv: claudeInferenceEnv(nil), keyHelper: nil,
+            imported: prepared?.preferences)
         }
       } else {
         let localEnv = try claudeLocalEnv(modelState, proxy: proxy)
@@ -502,7 +523,8 @@ extension AgentBootstrap {
   /// `imported` is what this bootstrap just recorded; without an import source
   /// the guest snapshot's last imported preferences are reapplied.
   func writeManagedClaudeSettings(
-    _ target: SSHTarget, localEnv: [String: String], imported: ClaudeImport.Preferences? = nil
+    _ target: SSHTarget, localEnv: [String: String], keyHelper: String? = nil,
+    imported: ClaudeImport.Preferences? = nil
   ) throws {
     let imported = try imported ?? readImportSnapshot(target).preferences
     let existing = Result<String, any Error> {
@@ -510,7 +532,8 @@ extension AgentBootstrap {
         target, RemoteCommand().literal("cat ~/.claude/settings.json 2>/dev/null || true"))
     }
     let merged = try ClaudeSettings.withImport(
-      existing, localEnv: localEnv, imported: imported, diagnostics: diagnostics)
+      existing, localEnv: localEnv, keyHelper: keyHelper, imported: imported,
+      diagnostics: diagnostics)
     do {
       try client.exec(
         target,

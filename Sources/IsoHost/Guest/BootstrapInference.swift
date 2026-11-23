@@ -24,11 +24,15 @@ extension AgentBootstrap {
       throw HostError(
         "inference.mode = \"required\" but this command has no inference controller (fail-closed)")
     }
-    return try inference.ensureSession(instance, target: target) { session in
+    return try inference.ensureSession(instance, target: target) { session, capability in
+      // The capability lives only in the guest (and the gateway): agents and
+      // grants read it from this file, so no later command needs it (§12.1).
+      try writeGuestInferenceToken(target, capability)
       // The bridge is the guest end of the vmnet relay; on brokered, the
       // forward's sshd listener is, and nothing else binds the port.
       if session.transport == .owner { try installInferenceBridge(target) }
-      try writeManagedClaudeSettings(target, localEnv: claudeInferenceEnv(session))
+      try writeManagedClaudeSettings(
+        target, localEnv: claudeInferenceEnv(session), keyHelper: claudeKeyHelper(session))
       if config.codex.localService != nil {
         try writeCodexInferenceConfig(instance, target: target, session: session)
       }
@@ -103,6 +107,22 @@ extension AgentBootstrap {
     }
   }
 
+  /// The session's capability into `~/.config/iso/inference-token` (`0600`),
+  /// over stdin, never argv.
+  func writeGuestInferenceToken(_ target: SSHTarget, _ capability: Secret<String>) throws {
+    let path = "~/" + GuestHomeFile.inferenceToken.rawValue
+    do {
+      try client.exec(
+        target,
+        RemoteCommand().literal(
+          "umask 077 && mkdir -p ~/.config/iso && t=\"$(mktemp \(path).XXXXXX)\" && cat > \"$t\" && mv -f \"$t\" \(path)"
+        ), stdin: Array(capability.expose().utf8))
+    } catch {
+      throw ContextError(
+        "Failed to write the inference capability into the guest (fail-closed)", cause: error)
+    }
+  }
+
   /// `127.0.0.1:11788` in the guest, bridged by systemd to the relayed
   /// gateway socket (§22). vmnet only.
   func installInferenceBridge(_ target: SSHTarget) throws {
@@ -117,19 +137,19 @@ extension AgentBootstrap {
   }
 
   /// SSH-session variables: the Codex provider key and an attach grant's
-  /// endpoint. A freshly registered session also refreshes Claude's managed
-  /// settings, whose capability belonged to the previous session.
+  /// endpoint. The capability is read in the guest from the file the session
+  /// wrote; the host sends only the names.
   func inferenceEnvironment(_ instance: Instance, target: SSHTarget, into env: inout EnvForward)
     throws
   {
     guard let (session, _) = try optionalInferenceSession(instance, target: target) else { return }
     if config.codex.localService != nil {
-      env.set(ModelRouting.codexLocalEnvKey, session.token)
+      env.setFromGuestFile(ModelRouting.codexLocalEnvKey, .inferenceToken)
     }
     if let grant = try InferenceAttachGrant.load(instance) {
       env.set(Self.attachVariables.baseURL, Secret(Self.attachBaseURL(grant.api, session)))
       env.set(Self.attachVariables.model, Secret(grant.service.rawValue))
-      env.set(Self.attachVariables.token, session.token)
+      env.setFromGuestFile(Self.attachVariables.token, .inferenceToken)
     }
   }
 
@@ -152,7 +172,8 @@ extension AgentBootstrap {
       return
     }
     try writeManagedClaudeSettings(
-      target, localEnv: claudeInferenceEnv(session), imported: imported)
+      target, localEnv: claudeInferenceEnv(session), keyHelper: claudeKeyHelper(session),
+      imported: imported)
   }
 
   /// A `{vault:}` provider secret given for the credential proxy, which
@@ -181,9 +202,19 @@ extension AgentBootstrap {
         authToken: Self.noSessionToken)
     }
     var env = ModelRouting.claudeEnvBlock(
-      baseURL: session.guestBaseURL, model: name.rawValue, authToken: session.token.expose())
+      baseURL: session.guestBaseURL, model: name.rawValue, authToken: nil)
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(service.service.maxContextTokens)
     return env
+  }
+
+  /// Claude reads the session's capability with `apiKeyHelper` from the
+  /// guest file, when the session grants it a service; otherwise the env's
+  /// refused token stands and iso's helper is removed.
+  func claudeKeyHelper(_ session: InferenceSession?) -> String? {
+    guard session != nil, let name = config.claude.localService,
+      config.inference.resolve(name) != nil
+    else { return nil }
+    return ClaudeSettings.inferenceKeyHelper
   }
 
   /// Codex's provider table: the gateway's Responses route and the alias.

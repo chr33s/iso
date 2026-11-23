@@ -28,8 +28,8 @@ package enum InferenceCarrier: Sendable, Equatable {
   case forward(socket: String, granted: Bool)
 }
 
-/// The gateway's transport kind (control protocol 3): which process
-/// activation binds the session to.
+/// The gateway's transport kind (control protocol 3 and later): which
+/// process activation binds the session to.
 package enum InferenceTransportKind: String, Sendable, Equatable {
   case owner
   case forward
@@ -66,7 +66,6 @@ package struct BoundProcess: Sendable, Equatable {
 package struct InferenceSession: Sendable, Equatable {
   package let sessionID: String
   package let epoch: String
-  package let token: Secret<String>
   /// Services granted, by alias.
   package let services: [InferenceServiceName]
   /// What carries guest connections: the vmnet relay (with the guest
@@ -130,7 +129,7 @@ package struct InferenceController: Sendable {
   package static let guestPort: UInt16 = 11788
   /// The gateway control protocol this host speaks (IsoInferenceCore's
   /// `ControlProtocol.version`).
-  static let controlVersion: UInt64 = 4
+  static let controlVersion: UInt64 = 5
   static let controlTimeoutSeconds = 15
   static let startTimeout: Duration = .seconds(5)
 
@@ -150,6 +149,9 @@ package struct InferenceController: Sendable {
   /// Checks the control socket's peer before anything is sent; production
   /// uses `verifyPeer`, tests a stand-in gateway in this process.
   let peerCheck: (@Sendable (ControlSocket.Peer) throws -> Void)?
+  /// Checks the process a session will be bound to; production uses
+  /// `checkCarrier`, tests stand-in processes.
+  let carrierCheck: (@Sendable (BoundProcess, InferenceTransportKind) throws -> Void)?
 
   package init(
     config: IsoConfig, environment: [String: String], resolver: CredentialResolver,
@@ -168,9 +170,11 @@ package struct InferenceController: Sendable {
     diagnostics: Diagnostics, isoExecutable: String?, proxies: ProxyLauncher,
     boot: @escaping @Sendable (Instance) throws -> InferenceBoot, sandboxExec: String,
     stateDirectory: String, relayDirectory: String,
-    peerCheck: (@Sendable (ControlSocket.Peer) throws -> Void)? = nil
+    peerCheck: (@Sendable (ControlSocket.Peer) throws -> Void)? = nil,
+    carrierCheck: (@Sendable (BoundProcess, InferenceTransportKind) throws -> Void)? = nil
   ) {
     self.peerCheck = peerCheck
+    self.carrierCheck = carrierCheck
     self.config = config
     self.environment = environment
     self.resolver = resolver
@@ -190,7 +194,11 @@ package struct InferenceController: Sendable {
   }
 
   static func statePath(_ instance: Instance) -> String { instance.directory + "/inference.json" }
-  static func tokenPath(_ instance: Instance) -> String { instance.directory + "/inference.token" }
+  /// Where releases before the guest-held capability (spec §12.1) kept a
+  /// host copy of it; only ever removed now.
+  static func legacyTokenPath(_ instance: Instance) -> String {
+    instance.directory + "/inference.token"
+  }
   package static func revokedPath(_ instance: Instance) -> String {
     instance.directory + "/inference-revoked"
   }
@@ -225,12 +233,13 @@ package struct InferenceController: Sendable {
   /// The instance's live session, established if needed. nil when the
   /// instance requests no service. `fresh` is true when a new session (and
   /// so a new capability) was just created. `configureGuest` writes the
-  /// guest's bridge and agent configuration for a new session before it is
-  /// activated (§12.2 step 6 before 7), so a failure or crash between them
-  /// leaves no active session the guest is not set up for.
+  /// capability, the guest's bridge and agent configuration for a new
+  /// session before it is activated (§12.2 step 6 before 7), so a failure
+  /// or crash between them leaves no active session the guest is not set up
+  /// for. The capability reaches only that closure: the host keeps no copy.
   package func ensureSession(
     _ instance: Instance, target: SSHTarget,
-    configureGuest: (InferenceSession) throws -> Void = { _ in }
+    configureGuest: (InferenceSession, Secret<String>) throws -> Void = { _, _ in }
   ) throws -> (session: InferenceSession, fresh: Bool)? {
     guard config.inference.mode == .required else {
       // A mode change disables admission first (§12.4): a session recorded
@@ -275,6 +284,25 @@ package struct InferenceController: Sendable {
     return (session, true)
   }
 
+  /// The checks on the process a session is bound to, which the gateway's
+  /// profile leaves to the host (§12.3): this user's, and running the sandbox
+  /// owner (`iso-sandbox`) or, for a brokered forward, the system `ssh`.
+  static func checkCarrier(_ carrier: BoundProcess, _ kind: InferenceTransportKind) throws {
+    guard HostProcess.uid(carrier.pid) == getuid(),
+      let path = HostProcess.executablePath(carrier.pid)
+    else { throw HostError("the session's transport process \(carrier.pid) is not this user's") }
+    let expected =
+      switch kind {
+      case .owner: (path as NSString).lastPathComponent == "iso-sandbox"
+      case .forward: path == "/usr/bin/ssh"
+      }
+    guard expected else {
+      throw HostError(
+        "the session's transport process \(carrier.pid) runs \(sanitizeForDisplay(path)), not \(kind == .owner ? "iso-sandbox" : "/usr/bin/ssh")"
+      )
+    }
+  }
+
   /// Remembered only with the exact processes the session is bound to: the
   /// sandbox owner and, on brokered, the forward.
   func remember(
@@ -287,7 +315,7 @@ package struct InferenceController: Sendable {
   /// revokes the partial session.
   func establish(
     _ instance: Instance, target: SSHTarget, services: [InferenceServiceName], fingerprint: String,
-    configureGuest: (InferenceSession) throws -> Void
+    configureGuest: (InferenceSession, Secret<String>) throws -> Void
   ) throws -> (InferenceSession, bound: [BoundProcess]) {
     let resolved = try services.map(resolved)
     try enforceBackends(resolved)
@@ -311,14 +339,12 @@ package struct InferenceController: Sendable {
       case .string(let capability)? = registered["capability"],
       registered["socket"] == .string(socket)
     else { throw HostError("iso-inference returned an incomplete registration") }
-    let token = Secret(capability)
-    var session = InferenceSession(
-      sessionID: sessionID, epoch: epoch, token: token, services: services)
+    var session = InferenceSession(sessionID: sessionID, epoch: epoch, services: services)
     session.transport = kind
     var bound = [owner]
     do {
       try verifyRegistered(instance, sessionID: sessionID, nonce: nonce)
-      try configureGuest(session)
+      try configureGuest(session, Secret(capability))
       // The session lives as long as the process that carries guest
       // connections: the owner relaying it (its exit, a VM stop, revokes the
       // session), or the brokered forward started only now, after the guest
@@ -332,12 +358,19 @@ package struct InferenceController: Sendable {
         carrier = BoundProcess(pid: forward.pid, start: forward.start)
         bound.append(carrier)
       }
+      try (carrierCheck ?? Self.checkCarrier)(carrier, kind)
+      // The gateway binds the session, and every connection to it, to this
+      // process's PID and PID version (§12.3). Read the version, then
+      // confirm the PID still names the recorded process.
+      guard let version = HostProcess.pidVersion(carrier.pid), carrier.isAlive else {
+        throw HostError("the process carrying '\(instance.name)''s session exited as it started")
+      }
       var activation: [(String, OutputJSON)] = [
         ("version", .uint(Self.controlVersion)), ("op", .string("activate_session")),
         ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
         (
           "transport",
-          .object([("pid", .int(Int64(carrier.pid))), ("start", .string(carrier.start))])
+          .object([("pid", .int(Int64(carrier.pid))), ("version", .uint(UInt64(version)))])
         ),
       ]
       if let deadline = bootInfo.deadline {
@@ -345,8 +378,7 @@ package struct InferenceController: Sendable {
           ("deadline_seconds", .int(max(1, Int64(deadline.timeIntervalSinceNow.rounded(.down))))))
       }
       _ = try control(activation)
-      try AtomicFile.write(
-        Array(capability.utf8), to: Self.tokenPath(instance), mode: .atMost(0o600))
+      unlink(Self.legacyTokenPath(instance))
       var state: [(String, OutputJSON)] = [
         ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
         ("owner_pid", .int(Int64(owner.pid))), ("owner_start", .string(owner.start)),
@@ -473,8 +505,6 @@ package struct InferenceController: Sendable {
           BoundProcess(pid: $0.pid, start: $0.start)
         }),
       case .array(let rawServices)? = state["services"],
-      let tokenBytes = try? StateStore.readControlFile(Self.tokenPath(instance)),
-      let token = String(validating: tokenBytes, as: UTF8.self),
       let inspection = try? inspect(instance, start: false),
       case .object(let gateway)? = inspection["gateway"], gateway["epoch"] == .string(epoch),
       case .array(let sessions)? = inspection["sessions"],
@@ -487,8 +517,7 @@ package struct InferenceController: Sendable {
       guard case .string(let raw) = value else { return nil }
       return try? InferenceServiceName(raw)
     }
-    var session = InferenceSession(
-      sessionID: sessionID, epoch: epoch, token: Secret(token), services: services)
+    var session = InferenceSession(sessionID: sessionID, epoch: epoch, services: services)
     session.transport = bound.count > 1 ? .forward : .owner
     return (session, fingerprint, bound)
   }
@@ -611,7 +640,7 @@ package struct InferenceController: Sendable {
 
   func removeState(_ instance: Instance) {
     unlink(Self.statePath(instance))
-    unlink(Self.tokenPath(instance))
+    unlink(Self.legacyTokenPath(instance))
   }
 
   func verifyRegistered(_ instance: Instance, sessionID: String, nonce: String) throws {

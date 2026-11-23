@@ -13,19 +13,34 @@ import Synchronization
 package struct EnvForward: Sendable, CustomStringConvertible {
   package private(set) var names: [String] = []
   private var values: [String: Secret<String>] = [:]
+  /// Variables the guest wrapper reads from a fixed file in the guest user's
+  /// home: the host never holds or sends their values.
+  package private(set) var guestFiles: [(name: String, file: GuestHomeFile)] = []
 
   package init() {}
 
   package mutating func set(_ name: String, _ value: Secret<String>) {
+    guestFiles.removeAll { $0.name == name }
     if values[name] == nil { names.append(name) }
     values[name] = value
   }
 
-  package func contains(_ name: String) -> Bool { values[name] != nil }
+  /// `name` set in the guest from `file`, read there when the command runs.
+  package mutating func setFromGuestFile(_ name: String, _ file: GuestHomeFile) {
+    if values.removeValue(forKey: name) != nil { names.removeAll { $0 == name } }
+    guestFiles.removeAll { $0.name == name }
+    guestFiles.append((name, file))
+  }
+
+  package func contains(_ name: String) -> Bool {
+    values[name] != nil || guestFiles.contains { $0.name == name }
+  }
 
   package var description: String {
     "EnvForward { vars: {"
-      + names.map { "\(debugQuoted($0)): \"<redacted>\"" }.joined(separator: ", ")
+      + (names.map { "\(debugQuoted($0)): \"<redacted>\"" }
+      + guestFiles.map { "\(debugQuoted($0.name)): <guest ~/\($0.file.rawValue)>" })
+      .joined(separator: ", ")
       + "} }"
   }
 
@@ -41,10 +56,21 @@ package struct EnvForward: Sendable, CustomStringConvertible {
   /// caller's TERM intent; a normalized TERM replaces a requested one before
   /// encoding, so it still wins as it did before aliasing.
   package func prepare(_ remote: String, terminal: GuestTerminal) throws -> PreparedGuestCommand {
-    guard !names.isEmpty else { return PreparedGuestCommand(remote: remote, aliases: []) }
-    guard names.count <= Self.maxEntries else {
+    guard !names.isEmpty || !guestFiles.isEmpty else {
+      return PreparedGuestCommand(remote: remote, aliases: [])
+    }
+    guard names.count + guestFiles.count <= Self.maxEntries else {
       throw HostError(
-        "Refusing to forward \(names.count) guest environment variables (limit \(Self.maxEntries))")
+        "Refusing to forward \(names.count + guestFiles.count) guest environment variables (limit \(Self.maxEntries))"
+      )
+    }
+    var fromFiles: [(name: EnvVarName, file: GuestHomeFile)] = []
+    for entry in guestFiles {
+      let valid: EnvVarName
+      do { valid = try EnvVarName(entry.name) } catch {
+        throw HostError("Refusing to set a guest environment variable: \(error.message)")
+      }
+      fromFiles.append((valid, entry.file))
     }
     var total = 0
     var entries: [(name: EnvVarName, value: String)] = []
@@ -78,19 +104,27 @@ package struct EnvForward: Sendable, CustomStringConvertible {
     // cannot disturb the restore. Names and aliases are validated literal shell
     // words; values never appear in the script.
     var script = RemoteCommand()
-    for index in entries.indices {
-      script = script.literal(index == 0 ? "" : " && ").literal("[ \"${\(3 + 2 * index)}\" = s ]")
+    if !entries.isEmpty {
+      for index in entries.indices {
+        script = script.literal(index == 0 ? "" : " && ").literal("[ \"${\(3 + 2 * index)}\" = s ]")
+      }
+      script = script.literal(
+        " || { echo 'iso: a forwarded guest environment variable did not arrive (the guest sshd must AcceptEnv ISO_SSH_ENV_*)' >&2; exit 125; }; "
+      ).literal("unset \(aliases.joined(separator: " ")); ")
+      for (index, entry) in entries.enumerated() {
+        script = script.literal(index == 0 ? "" : " && ")
+          .literal("export \(entry.name.rawValue)=\"${\(4 + 2 * index)}\"")
+      }
+      script = script.literal(
+        " || { echo 'iso: failed to set a forwarded guest environment variable' >&2; exit 125; }; ")
     }
-    script = script.literal(
-      " || { echo 'iso: a forwarded guest environment variable did not arrive (the guest sshd must AcceptEnv ISO_SSH_ENV_*)' >&2; exit 125; }; "
-    ).literal("unset \(aliases.joined(separator: " ")); ")
-    for (index, entry) in entries.enumerated() {
-      script = script.literal(index == 0 ? "" : " && ")
-        .literal("export \(entry.name.rawValue)=\"${\(4 + 2 * index)}\"")
+    // Read in the guest, from a fixed path under the guest user's home: a
+    // missing file leaves the variable empty, which the gateway refuses.
+    for entry in fromFiles {
+      script = script.literal(
+        "export \(entry.name.rawValue)=\"$(cat \"$HOME/\(entry.file.rawValue)\" 2>/dev/null)\"; ")
     }
-    script = script.literal(
-      " || { echo 'iso: failed to set a forwarded guest environment variable' >&2; exit 125; }; "
-    ).literal("exec \"$2\" -c \"$1\"")
+    script = script.literal("exec \"$2\" -c \"$1\"")
     var wrapper = RemoteCommand().literal("exec /bin/sh -c ").arg(script.rendered)
       .literal(" iso-env ").arg(remote).literal(" \"${SHELL:-/bin/sh}\"")
     for alias in aliases { wrapper = wrapper.literal(" \"${\(alias)+s}\" \"${\(alias)-}\"") }
@@ -104,6 +138,14 @@ package struct EnvForward: Sendable, CustomStringConvertible {
       remote: wrapper.rendered,
       aliases: zip(aliases, entries).map { ($0, Secret($1.value)) })
   }
+}
+
+/// A file under the guest user's home that the guest wrapper reads into a
+/// variable. A closed set of literal paths: none comes from configuration or
+/// the guest.
+package enum GuestHomeFile: String, Sendable, Equatable {
+  /// The instance's gateway capability, written once per session (spec §12.1).
+  case inferenceToken = ".config/iso/inference-token"
 }
 
 /// What a guest PTY's TERM should be: the caller's requested value, or iso's

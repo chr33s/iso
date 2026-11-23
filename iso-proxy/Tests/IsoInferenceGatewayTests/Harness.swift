@@ -385,8 +385,7 @@ final class Harness: @unchecked Sendable {
     gateway = Gateway(
       group: group, journal: journal,
       audit: AuditLog(path: directory + "/audit.log") { clock.now },
-      relayDirectory: relayDirectory, backendPorts: backendPorts, transportCommand: "sleep",
-      forwardExecutable: Self.forwardExecutable, timing: timing,
+      relayDirectory: relayDirectory, backendPorts: backendPorts, timing: timing,
       sharedConnections: sharedConnections, onExit: {})
   }
 
@@ -399,52 +398,68 @@ final class Harness: @unchecked Sendable {
     try? FileManager.default.removeItem(atPath: relayDirectory)
   }
 
+  /// A stand-in process to bind or to register as the owner; its exit is
+  /// what the gateway watches.
   func spawnTransport() throws -> (Process, TransportBinding) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sleep")
     process.arguments = ["300"]
     try process.run()
     transports.append(process)
-    let identity = try #require(ProcessIdentity.of(process.processIdentifier))
-    return (process, TransportBinding(pid: process.processIdentifier, start: identity.start))
+    return (process, try TestProcess.binding(process.processIdentifier))
   }
 
-  /// What stands in for the host's `ssh` reverse forward: a program other
-  /// than the owner's stand-in, so neither passes for the other.
-  static let forwardExecutable = "/usr/bin/tail"
-
-  func spawnForward() throws -> (Process, TransportBinding) {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: Self.forwardExecutable)
-    process.arguments = ["-f", "/dev/null"]
-    try process.run()
-    transports.append(process)
-    let identity = try #require(ProcessIdentity.of(process.processIdentifier))
-    return (process, TransportBinding(pid: process.processIdentifier, start: identity.start))
-  }
+  /// Which process a session's connections come from. The gateway admits
+  /// only the bound process, so a session whose requests this test sends is
+  /// bound to this test process; one whose transport a test kills is bound
+  /// to a spawned stand-in.
+  enum Carrier { case thisProcess, spawned }
 
   struct Session {
     let id: String
     /// The session socket's path.
     let socket: String
     let token: String
-    /// The bound process: the owner, or a `forward` session's forward.
-    let transport: Process
-    /// The registration's sandbox owner.
-    let owner: Process
+    /// The bound process when spawned; nil when it is this test process.
+    let transport: Process?
+    /// The registration's sandbox owner when spawned; nil when it is this
+    /// test process.
+    let owner: Process?
   }
 
   func session(
     _ grants: [ServiceGrant], name: String = "dev", deadlineSeconds: Int64? = nil,
-    activate: Bool = true, transport kind: TransportKind = .owner
+    activate: Bool = true, transport kind: TransportKind = .owner,
+    carrier: Carrier = .thisProcess
   ) throws -> Session {
     // The owner stands in for the instance's sandbox owner, whose identity
-    // is the registration's boot identity; a forward session binds a forward.
-    let (owner, ownerBinding) = try spawnTransport()
-    let (process, binding) = kind == .owner ? (owner, ownerBinding) : try spawnForward()
+    // is the registration's boot identity; a forward session binds another
+    // process, the forward.
+    let owner: Process?
+    let ownerPID: pid_t
+    let transport: Process?
+    let binding: TransportBinding
+    switch (kind, carrier) {
+    case (.owner, .thisProcess):
+      (owner, ownerPID, transport, binding) = (
+        nil, getpid(), nil, try TestProcess.binding(getpid())
+      )
+    case (.owner, .spawned):
+      let (process, bound) = try spawnTransport()
+      (owner, ownerPID, transport, binding) = (process, bound.pid, process, bound)
+    case (.forward, .thisProcess):
+      let (process, bound) = try spawnTransport()
+      (owner, ownerPID, transport, binding) = (
+        process, bound.pid, nil, try TestProcess.binding(getpid())
+      )
+    case (.forward, .spawned):
+      let (ownerProcess, ownerBound) = try spawnTransport()
+      let (forward, bound) = try spawnTransport()
+      (owner, ownerPID, transport, binding) = (ownerProcess, ownerBound.pid, forward, bound)
+    }
     let registration = ControlProtocol.Registration(
       instance: .init(dataRoot: directory, name: name),
-      boot: BootIdentity(ownerPID: ownerBinding.pid, ownerStart: ownerBinding.start),
+      boot: BootIdentity(ownerPID: ownerPID, ownerStart: try TestProcess.start(ownerPID)),
       nonce: String(repeating: "0", count: 32), limits: .defaults, grants: grants,
       socket: Self.socketName(name), transport: kind)
     let registered = try gateway.register(registration)
@@ -456,7 +471,7 @@ final class Harness: @unchecked Sendable {
     }
     return Session(
       id: registered.sessionID, socket: relayDirectory + "/" + registered.socket,
-      token: registered.capability.expose(), transport: process, owner: owner)
+      token: registered.capability.expose(), transport: transport, owner: owner)
   }
 
   /// The runtime names a socket by a hex hash; one per instance name here.
@@ -578,4 +593,41 @@ extension RawClient {
 
 func discoveryGrant(_ port: UInt16) -> ServiceGrant {
   grant(.openAIChat, port: port, apis: [.openAIChat, .modelDiscovery])
+}
+
+/// Process facts the host reads (the tests run unconfined): a start time for
+/// boot identities, and the audit token's PID version for bindings.
+enum TestProcess {
+  static func start(_ pid: pid_t) throws -> ProcessStart {
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else {
+      throw InferenceError(.requestInvalid, "no process \(pid)")
+    }
+    return ProcessStart(seconds: info.pbi_start_tvsec, microseconds: info.pbi_start_tvusec)
+  }
+
+  static func version(_ pid: pid_t) throws -> UInt32 {
+    var name = mach_port_name_t(MACH_PORT_NULL)
+    guard task_name_for_pid(mach_task_self_, pid, &name) == KERN_SUCCESS else {
+      throw InferenceError(.requestInvalid, "no task name for \(pid)")
+    }
+    defer { _ = mach_port_deallocate(mach_task_self_, name) }
+    var token = audit_token_t()
+    var count = mach_msg_type_number_t(
+      MemoryLayout<audit_token_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &token) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        task_info(name, task_flavor_t(TASK_AUDIT_TOKEN), $0, &count)
+      }
+    }
+    guard result == KERN_SUCCESS else {
+      throw InferenceError(.requestInvalid, "no audit token for \(pid)")
+    }
+    return token.val.7
+  }
+
+  static func binding(_ pid: pid_t) throws -> TransportBinding {
+    TransportBinding(pid: pid, version: try version(pid))
+  }
 }

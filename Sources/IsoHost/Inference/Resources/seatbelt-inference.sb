@@ -36,13 +36,13 @@
 
 (allow sysctl-read)
 (allow system-socket)
+;; No process information about any other process. `deny default` alone
+;; leaves proc_pidinfo and proc_pidpath on this user's processes allowed, so
+;; the deny is explicit; the later rule allows the gateway's own. It watches
+;; the bound transport's exit with kqueue and identifies each connection by
+;; its peer token (LOCAL_PEERTOKEN), neither of which needs it (§12.3).
+(deny process-info*)
 (allow process-info* (target self))
-;; The instance's sandbox owner process, which carries the vsock relay:
-;; identity (proc_pidinfo) at activation and its exit notification
-;; (§12.3, §22). Seatbelt cannot name that PID in advance, so this allows
-;; read-only process metadata (start time, owner, path) for any process;
-;; it grants no signal, task port or memory access.
-(allow process-info-pidinfo)
 (allow mach-lookup (global-name "com.apple.system.logger"))
 
 ;; Writes only under the owner-only state directory: the control socket,

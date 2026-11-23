@@ -69,6 +69,25 @@ enum HostProcess {
     bsdInfo(pid)?.pbi_uid
   }
 
+  /// The audit token's PID version of `pid` (`TASK_AUDIT_TOKEN` through its
+  /// task name port): with the PID, it names one process. nil when the
+  /// process is gone or not inspectable.
+  static func pidVersion(_ pid: Int32) -> UInt32? {
+    var name = mach_port_name_t(MACH_PORT_NULL)
+    guard task_name_for_pid(mach_task_self_, pid, &name) == KERN_SUCCESS else { return nil }
+    defer { mach_port_deallocate(mach_task_self_, name) }
+    var token = audit_token_t()
+    var count = mach_msg_type_number_t(
+      MemoryLayout<audit_token_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &token) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        task_info(name, task_flavor_t(TASK_AUDIT_TOKEN), $0, &count)
+      }
+    }
+    guard result == KERN_SUCCESS, Int32(bitPattern: token.val.5) == pid else { return nil }
+    return token.val.7
+  }
+
   static func executablePath(_ pid: Int32) -> String? {
     var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
     let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))

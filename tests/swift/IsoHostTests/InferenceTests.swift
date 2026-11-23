@@ -64,8 +64,7 @@ private func controller(_ config: IsoConfig, guest: FakeGuest, state: String) ->
     sandboxExec: "/usr/bin/sandbox-exec", stateDirectory: state, relayDirectory: state + "-relay")
 }
 
-private let session = InferenceSession(
-  sessionID: "s", epoch: "e", token: Secret(String(repeating: "c", count: 64)), services: [])
+private let session = InferenceSession(sessionID: "s", epoch: "e", services: [])
 
 @Test func inferenceSeatbeltProfileMatchesItsCanonicalFile() throws {
   let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -129,7 +128,10 @@ private let session = InferenceSession(
   let agents = guest.bootstrap(try guardedConfig())
   let env = agents.claudeInferenceEnv(session)
   #expect(env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:11788")
-  #expect(env["ANTHROPIC_AUTH_TOKEN"] == session.token.expose())
+  // The capability comes from the key helper reading the guest's file.
+  #expect(env["ANTHROPIC_AUTH_TOKEN"] == nil)
+  #expect(agents.claudeKeyHelper(session) == ClaudeSettings.inferenceKeyHelper)
+  #expect(ClaudeSettings.inferenceKeyHelper.contains(GuestHomeFile.inferenceToken.rawValue))
   #expect(env["ANTHROPIC_MODEL"] == "local-claude")
   #expect(env["ANTHROPIC_SMALL_FAST_MODEL"] == "local-claude")
   #expect(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "65536")
@@ -138,7 +140,44 @@ private let session = InferenceSession(
   #expect(rendered.contains(#"base_url = "http://127.0.0.1:11788/v1""#))
   #expect(rendered.contains(#"model = "local-codex""#))
   #expect(rendered.contains(#"wire_api = "responses""#))
-  #expect(!rendered.contains(session.token.expose()))
+  #expect(rendered.contains(#"env_key = ""# + ModelRouting.codexLocalEnvKey + #"""#))
+}
+
+/// The key helper is iso's to set and to remove: removed only where it is
+/// still iso's, so a stale helper never sends the capability once the mode
+/// changes, and a guest's own helper is left alone.
+@Test func claudeKeyHelperIsManagedOnlyWhereItIsIsos() throws {
+  let mine = ClaudeSettings.inferenceKeyHelper
+  let set = try ClaudeSettings.merge("{}", localEnv: [:], keyHelper: mine)
+  #expect(set.contains(#""apiKeyHelper""#))
+  let cleared = try ClaudeSettings.merge(set, localEnv: [:], keyHelper: nil)
+  #expect(!cleared.contains("apiKeyHelper"))
+  let theirs = try ClaudeSettings.merge(#"{"apiKeyHelper":"my-helper"}"#, localEnv: [:])
+  #expect(theirs.contains("my-helper"))
+  #expect(ClaudeSettings.managedDefaults([:], keyHelper: mine).contains(#""apiKeyHelper""#))
+}
+
+/// A guest-file variable is read in the guest from a fixed path: the host
+/// sends no value and no `SendEnv` for it.
+@Test func guestFileVariablesAreReadInTheGuest() throws {
+  var env = EnvForward()
+  env.set("PLAIN", Secret("value"))
+  env.setFromGuestFile(ModelRouting.codexLocalEnvKey, .inferenceToken)
+  let prepared = try env.prepare("true", terminal: .requested)
+  #expect(prepared.remote.contains(GuestHomeFile.inferenceToken.rawValue))
+  #expect(prepared.remote.contains("export \(ModelRouting.codexLocalEnvKey)="))
+  #expect(prepared.options == ["-o", "SendEnv=\(EnvForward.aliasPrefix)0"])
+  #expect(env.contains(ModelRouting.codexLocalEnvKey))
+  #expect(!"\(env)".contains("value"))
+  // Only guest-file variables: a wrapper with no alias check.
+  var only = EnvForward()
+  only.setFromGuestFile("ISO_INFERENCE_TOKEN", .inferenceToken)
+  let alone = try only.prepare("true", terminal: .requested)
+  #expect(alone.options.isEmpty && alone.remote.contains("ISO_INFERENCE_TOKEN"))
+  #expect(!alone.remote.contains("did not arrive"))
+  // Setting a literal replaces a guest-file variable of the same name.
+  only.set("ISO_INFERENCE_TOKEN", Secret("x"))
+  #expect(only.guestFiles.isEmpty)
 }
 
 @Test func launchingAnAgentWithoutAServiceIsRefused() throws {
@@ -415,4 +454,70 @@ final class UnixReplyServer: @unchecked Sendable {
   ] as [String?] {
     #expect(throws: HostError.self) { try control.relaySocketName(bad, instance: instance) }
   }
+}
+
+/// The checks the gateway leaves to the host (spec §12.3): the bound process
+/// is this user's and runs the sandbox owner (`iso-sandbox`) or, for a
+/// brokered forward, the system `ssh`. Its PID version is readable.
+@Test func theCarrierIsTheSandboxOwnerOrTheSystemSSH() throws {
+  let directory = try scratchDirectory("carrier")
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  // A copy of /bin/sleep is killed outside the system paths: build a
+  // sleeper under the owner's name instead.
+  let owner = directory + "/iso-sandbox"
+  let compiler = Process()
+  compiler.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
+  compiler.arguments = ["-x", "c", "-", "-o", owner]
+  let source = Pipe()
+  compiler.standardInput = source
+  try compiler.run()
+  source.fileHandleForWriting.write(
+    Data("#include <unistd.h>\nint main(void) { sleep(30); return 0; }\n".utf8))
+  try source.fileHandleForWriting.close()
+  compiler.waitUntilExit()
+  try #require(compiler.terminationStatus == 0)
+  func spawn(_ path: String, _ arguments: [String]) throws -> Process {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = arguments
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    return process
+  }
+  // ssh waits on a silent ProxyCommand: no network is used.
+  let processes = [
+    try spawn(owner, []), try spawn("/bin/sleep", ["30"]),
+    try spawn(
+      "/usr/bin/ssh",
+      ["-F", "none", "-o", "BatchMode=yes", "-o", "ProxyCommand=/bin/sleep 30", "carrier.invalid"]),
+  ]
+  defer { for process in processes { process.terminate() } }
+  usleep(300_000)
+  let bound = try processes.map { process in
+    BoundProcess(
+      pid: process.processIdentifier,
+      start: try #require(HostProcess.start(process.processIdentifier)))
+  }
+  try InferenceController.checkCarrier(bound[0], .owner)
+  try InferenceController.checkCarrier(bound[2], .forward)
+  for (process, kind) in [
+    (bound[0], InferenceTransportKind.forward), (bound[1], .owner), (bound[1], .forward),
+    (bound[2], .owner),
+  ] {
+    #expect(throws: HostError.self) { try InferenceController.checkCarrier(process, kind) }
+  }
+  #expect(HostProcess.pidVersion(bound[0].pid) != nil)
+  #expect(HostProcess.pidVersion(bound[0].pid) != HostProcess.pidVersion(bound[1].pid))
+  // The version is the one the gateway sees in a connection's peer token:
+  // here this process's, through a socket pair.
+  var pair: [Int32] = [0, 0]
+  try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+  defer { for fd in pair { close(fd) } }
+  var token = audit_token_t()
+  var length = socklen_t(MemoryLayout<audit_token_t>.size)
+  try #require(getsockopt(pair[0], SOL_LOCAL, LOCAL_PEERTOKEN, &token, &length) == 0)
+  #expect(Int32(bitPattern: token.val.5) == getpid())
+  #expect(HostProcess.pidVersion(getpid()) == token.val.7)
 }

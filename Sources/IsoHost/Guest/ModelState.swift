@@ -150,13 +150,16 @@ package enum ModelRouting {
   /// Claude `settings.json` `env` for a local endpoint: every model tier is
   /// pinned to the local model, and the two per-request prompt mutators are
   /// disabled so a local server's prefix cache stays warm.
-  package static func claudeEnvBlock(baseURL: String, model: String, authToken: String)
+  /// `authToken` nil leaves `ANTHROPIC_AUTH_TOKEN` out: the guarded
+  /// inference session's capability comes from Claude's `apiKeyHelper`.
+  package static func claudeEnvBlock(baseURL: String, model: String, authToken: String?)
     -> [String: String]
   {
     var env = [
-      "ANTHROPIC_BASE_URL": baseURL, "ANTHROPIC_AUTH_TOKEN": authToken,
+      "ANTHROPIC_BASE_URL": baseURL,
       "CLAUDE_CODE_ATTRIBUTION_HEADER": "0", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1",
     ]
+    if let authToken { env["ANTHROPIC_AUTH_TOKEN"] = authToken }
     for tier in [
       "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
       "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",

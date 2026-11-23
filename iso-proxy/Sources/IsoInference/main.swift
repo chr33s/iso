@@ -93,7 +93,7 @@ func main() -> Exit {
   }
   if selftest {
     log(
-      "jail self-test: writes outside the state and relay directories, TCP listeners, exec, non-loopback egress and unlisted loopback ports denied"
+      "jail self-test: writes outside the state and relay directories, TCP listeners, exec, non-loopback egress, unlisted loopback ports and other processes' information denied"
     )
     return .ok
   }

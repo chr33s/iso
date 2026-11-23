@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import IsoProxyCore
 
@@ -256,13 +257,36 @@ package enum TransportKind: String, Sendable, Equatable, CaseIterable {
   case forward
 }
 
-/// The transport process a session is bound to at activation (§12.3).
+/// The transport process a session is bound to at activation (§12.3): its
+/// PID and the kernel's per-process version of that PID (an audit token's
+/// `pidversion`), which together name one process even after the PID is
+/// reused. The gateway compares them with each connection's peer token, so
+/// it never reads another process's information.
 package struct TransportBinding: Sendable, Equatable {
   package let pid: Int32
-  package let start: ProcessStart
+  package let version: UInt32
 
-  package init(pid: Int32, start: ProcessStart) {
+  package init(pid: Int32, version: UInt32) {
     self.pid = pid
-    self.start = start
+    self.version = version
+  }
+}
+
+/// The process at the other end of an accepted Unix-socket connection, from
+/// its audit token (`LOCAL_PEERTOKEN`).
+package struct PeerIdentity: Sendable, Equatable {
+  package let pid: Int32
+  package let version: UInt32
+  package let uid: uid_t
+
+  package init(pid: Int32, version: UInt32, uid: uid_t) {
+    self.pid = pid
+    self.version = version
+    self.uid = uid
+  }
+
+  /// Whether this peer is the bound process, running as `uid`.
+  package func isProcess(_ binding: TransportBinding, uid expected: uid_t) -> Bool {
+    pid == binding.pid && version == binding.version && uid == expected
   }
 }

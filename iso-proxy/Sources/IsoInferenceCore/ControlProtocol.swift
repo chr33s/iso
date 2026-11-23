@@ -9,8 +9,9 @@ package enum ControlProtocol {
   /// TCP ports (§22). 3: a registration declares its transport kind
   /// (`owner` or `forward`), which fixes the process activation may bind.
   /// 4: each grant's backend names its front end (`front`), which fixes
-  /// whether connections are challenged (§20.3).
-  package static let version: Int64 = 4
+  /// whether connections are challenged (§20.3). 5: an activation binds the
+  /// transport by PID and `pidversion`, not start time (§12.3).
+  package static let version: Int64 = 5
   package static let maxFrameBytes = 256 << 10
 
   package enum Request: Sendable {
@@ -154,7 +155,7 @@ package enum ControlProtocol {
       out["transport"] = .object(
         JSONObject([
           "pid": .int(Int64(activation.transport.pid)),
-          "start": .string(activation.transport.start.description),
+          "version": .int(Int64(activation.transport.version)),
         ]))
       if let deadline = activation.deadlineSeconds { out["deadline_seconds"] = .int(deadline) }
     case .revoke(.session(let id)):
@@ -217,7 +218,7 @@ package enum ControlProtocol {
     case "activate_session":
       try r.only(["version", "op", "session_id", "epoch", "transport", "deadline_seconds"])
       let transport = try r.object("transport")
-      try transport.only(["pid", "start"])
+      try transport.only(["pid", "version"])
       let deadline = try r.optionalInt("deadline_seconds")
       if let deadline, deadline < 1 {
         throw InferenceError(.requestInvalid, "deadline_seconds must be positive")
@@ -227,7 +228,8 @@ package enum ControlProtocol {
           sessionID: try r.string("session_id", maxBytes: 64),
           epoch: try r.string("epoch", maxBytes: 64),
           transport: TransportBinding(
-            pid: try transport.pid("pid"), start: try transport.start("start")),
+            pid: try transport.pid("pid"),
+            version: UInt32(try transport.bounded("version", 1...Int(UInt32.max)))),
           deadlineSeconds: deadline))
     case "revoke_session":
       if r.object["session_id"] != nil {

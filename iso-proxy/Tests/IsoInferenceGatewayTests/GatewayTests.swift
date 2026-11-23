@@ -122,12 +122,13 @@ import Testing
   @Test func inactiveAndRevokedSessionsAreRejected() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
+    // Before activation no process is bound, so every connection is closed.
     let inactive = try harness.session([grant(.openAIChat, port: backend.port)], activate: false)
     #expect(
       RawClient.request(
         socket: inactive.socket, target: "/v1/chat/completions", token: inactive.token,
         body: chatBody
-      ).status == 401)
+      ).status == 0)
     let session = try harness.session([grant(.openAIChat, port: backend.port)], name: "b")
     harness.gateway.revoke(.session(session.id))
     // The listener is closed: nothing answers, and the backend saw nothing.
@@ -140,8 +141,8 @@ import Testing
   @Test func transportExitRevokesTheSession() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
-    let session = try harness.session([grant(.openAIChat, port: backend.port)])
-    session.transport.terminate()
+    let session = try harness.session([grant(.openAIChat, port: backend.port)], carrier: .spawned)
+    try #require(session.transport).terminate()
     #expect(
       eventually {
         harness.gateway.inspect(nil)["sessions"]?.array?.isEmpty == true
@@ -152,77 +153,102 @@ import Testing
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
     let (_, owner) = try harness.spawnTransport()
-    let registered = try harness.gateway.register(
-      ControlProtocol.Registration(
-        instance: .init(dataRoot: harness.directory, name: "x"),
-        boot: BootIdentity(ownerPID: owner.pid, ownerStart: owner.start),
-        nonce: String(repeating: "0", count: 32), limits: .defaults,
-        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("x"),
-        transport: .owner))
-    func activate(_ binding: TransportBinding, epoch: String? = nil) throws {
-      try harness.gateway.activate(
-        .init(
-          sessionID: registered.sessionID, epoch: epoch ?? harness.gateway.epoch,
-          transport: binding, deadlineSeconds: nil))
+    func register(_ name: String, owner: pid_t) throws -> String {
+      try harness.gateway.register(
+        ControlProtocol.Registration(
+          instance: .init(dataRoot: harness.directory, name: name),
+          boot: BootIdentity(ownerPID: owner, ownerStart: try TestProcess.start(owner)),
+          nonce: String(repeating: "0", count: 32), limits: .defaults,
+          grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName(name),
+          transport: .owner)
+      ).sessionID
     }
-    // Another live process with the right command and owner is still not
-    // the registered sandbox owner (§22.4).
-    let (_, other) = try harness.spawnTransport()
-    #expect(throws: InferenceError.self) { try activate(other) }
-    let wrongStart = TransportBinding(
-      pid: owner.pid, start: ProcessStart(seconds: owner.start.seconds + 1, microseconds: 0))
-    #expect(throws: InferenceError.self) { try activate(wrongStart) }
-    #expect(throws: InferenceError.self) { try activate(owner, epoch: "stale-epoch") }
-    try activate(owner)
-
-    // A boot identity whose PID now names another process (reuse): it
-    // matches itself, but not the live process's start time.
-    let (_, reused) = try harness.spawnTransport()
-    let stale = TransportBinding(
-      pid: reused.pid, start: ProcessStart(seconds: reused.start.seconds - 1, microseconds: 0))
-    let second = try harness.gateway.register(
-      ControlProtocol.Registration(
-        instance: .init(dataRoot: harness.directory, name: "y"),
-        boot: BootIdentity(ownerPID: stale.pid, ownerStart: stale.start),
-        nonce: String(repeating: "0", count: 32), limits: .defaults,
-        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("y"),
-        transport: .owner))
-    #expect(throws: InferenceError.self) {
+    let registered = try register("x", owner: owner.pid)
+    func activate(_ id: String, _ binding: TransportBinding, epoch: String? = nil) throws {
       try harness.gateway.activate(
         .init(
-          sessionID: second.sessionID, epoch: harness.gateway.epoch, transport: stale,
+          sessionID: id, epoch: epoch ?? harness.gateway.epoch, transport: binding,
           deadlineSeconds: nil))
+    }
+    // Another live process is not the registered sandbox owner (§22.4).
+    let (_, other) = try harness.spawnTransport()
+    #expect(throws: InferenceError.self) { try activate(registered, other) }
+    #expect(throws: InferenceError.self) { try activate(registered, owner, epoch: "stale-epoch") }
+    try activate(registered, owner)
+    // An owner that has exited cannot be watched, so it is never bound.
+    let (gone, goneBinding) = try harness.spawnTransport()
+    let second = try register("y", owner: goneBinding.pid)
+    gone.terminate()
+    gone.waitUntilExit()
+    #expect(throws: InferenceError.self) { try activate(second, goneBinding) }
+    #expect(harness.gatewaySession(second)?.phase == .inactive)
+  }
+
+  /// Only the bound process may connect: its PID and PID version, as this
+  /// user. The gateway reads no process information to decide this, only
+  /// each connection's peer token.
+  @Test func onlyTheBoundProcessMayConnect() throws {
+    let backend = try FakeBackend(.stream(chatEvents))
+    let harness = try Harness()
+    // Bound to a stand-in: this test process is another process.
+    let elsewhere = try harness.session(
+      [grant(.openAIChat, port: backend.port)], name: "a", carrier: .spawned)
+    #expect(
+      RawClient.request(
+        socket: elsewhere.socket, target: "/v1/chat/completions", token: elsewhere.token,
+        body: chatBody
+      ).status == 0)
+    // Bound to this process's PID under another PID version: a reused PID.
+    let reused = try harness.session(
+      [grant(.openAIChat, port: backend.port)], name: "b", activate: false)
+    let me = try TestProcess.binding(getpid())
+    try harness.gateway.activate(
+      .init(
+        sessionID: reused.id, epoch: harness.gateway.epoch,
+        transport: TransportBinding(pid: me.pid, version: me.version &+ 1), deadlineSeconds: nil))
+    #expect(
+      RawClient.request(
+        socket: reused.socket, target: "/v1/chat/completions", token: reused.token, body: chatBody
+      ).status == 0)
+    #expect(backend.requests.isEmpty, "a refused connection reaches nothing")
+    // Bound to this process: served.
+    let mine = try harness.session([grant(.openAIChat, port: backend.port)], name: "c")
+    #expect(
+      RawClient.request(
+        socket: mine.socket, target: "/v1/chat/completions", token: mine.token, body: chatBody
+      ).status == 200)
+  }
+
+  @Test func peersMatchOnlyTheirOwnProcessAndUser() {
+    let binding = TransportBinding(pid: 7, version: 40)
+    #expect(PeerIdentity(pid: 7, version: 40, uid: getuid()).isProcess(binding, uid: getuid()))
+    for peer in [
+      PeerIdentity(pid: 8, version: 40, uid: getuid()),
+      PeerIdentity(pid: 7, version: 41, uid: getuid()),
+      PeerIdentity(pid: 7, version: 40, uid: getuid() &+ 1),
+    ] {
+      #expect(!peer.isProcess(binding, uid: getuid()), "\(peer)")
     }
   }
 
   /// A `forward` session (the brokered transport) binds the host's reverse
-  /// forward: this user's live `ssh` with the declared start, never the
-  /// owner or another program, while the registered owner still runs.
+  /// forward, a process other than the owner, while the registered owner
+  /// still runs. Which program the forward runs is the host's check.
   @Test func forwardActivationBindsTheDeclaredForward() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
     let session = try harness.session(
       [grant(.openAIChat, port: backend.port)], activate: false, transport: .forward)
-    let ownerBinding = TransportBinding(
-      pid: session.owner.processIdentifier,
-      start: try #require(ProcessIdentity.of(session.owner.processIdentifier)).start)
-    let forward = TransportBinding(
-      pid: session.transport.processIdentifier,
-      start: try #require(ProcessIdentity.of(session.transport.processIdentifier)).start)
+    let owner = try TestProcess.binding(try #require(session.owner).processIdentifier)
+    let forward = try TestProcess.binding(getpid())
     func activate(_ binding: TransportBinding) throws {
       try harness.gateway.activate(
         .init(
           sessionID: session.id, epoch: harness.gateway.epoch, transport: binding,
           deadlineSeconds: nil))
     }
-    // The owner is not a forward; nor is another program, nor the forward
-    // under another start time.
-    #expect(throws: InferenceError.self) { try activate(ownerBinding) }
-    let (_, other) = try harness.spawnTransport()
-    #expect(throws: InferenceError.self) { try activate(other) }
-    let wrongStart = TransportBinding(
-      pid: forward.pid, start: ProcessStart(seconds: forward.start.seconds + 1, microseconds: 0))
-    #expect(throws: InferenceError.self) { try activate(wrongStart) }
+    // The owner is not a forward.
+    #expect(throws: InferenceError.self) { try activate(owner) }
     #expect(harness.gatewaySession(session.id)?.phase == .inactive)
     try activate(forward)
     #expect(
@@ -234,63 +260,34 @@ import Testing
     #expect(listed["transport_pid"]?.number?.int64 == Int64(forward.pid))
   }
 
-  /// The forward check itself: a process of another user, another start or
-  /// another executable is never the forward.
-  @Test func forwardProcessesMustBeThisUsersSystemSSH() {
-    let start = ProcessStart(seconds: 10, microseconds: 5)
-    let binding = TransportBinding(pid: 7, start: start)
-    let mine = ProcessIdentity(command: "ssh", uid: getuid(), start: start)
-    #expect(
-      Gateway.isForwardProcess(
-        mine, executable: "/usr/bin/ssh", binding: binding, expected: "/usr/bin/ssh", uid: getuid())
-    )
-    let cases: [(ProcessIdentity?, String?)] = [
-      (ProcessIdentity(command: "ssh", uid: getuid() &+ 1, start: start), "/usr/bin/ssh"),
-      (
-        ProcessIdentity(command: "ssh", uid: getuid(), start: .init(seconds: 10, microseconds: 6)),
-        "/usr/bin/ssh"
-      ),
-      (mine, "/opt/homebrew/bin/ssh"),
-      (mine, nil),
-      (nil, "/usr/bin/ssh"),
-    ]
-    for (index, (identity, executable)) in cases.enumerated() {
-      #expect(
-        !Gateway.isForwardProcess(
-          identity, executable: executable, binding: binding, expected: "/usr/bin/ssh",
-          uid: getuid()), "case \(index)")
-    }
-  }
-
   /// A forward session ends with its forward, and with its boot: the
   /// owner's exit revokes it while the forward still runs.
   @Test func forwardSessionsEndWithTheForwardOrTheOwner() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
     let first = try harness.session(
-      [grant(.openAIChat, port: backend.port)], name: "a", transport: .forward)
-    first.transport.terminate()
+      [grant(.openAIChat, port: backend.port)], name: "a", transport: .forward, carrier: .spawned)
+    try #require(first.transport).terminate()
     #expect(eventually { harness.gatewaySession(first.id) == nil })
     let second = try harness.session(
-      [grant(.openAIChat, port: backend.port)], name: "b", transport: .forward)
-    second.owner.terminate()
+      [grant(.openAIChat, port: backend.port)], name: "b", transport: .forward, carrier: .spawned)
+    try #require(second.owner).terminate()
     #expect(eventually { harness.gatewaySession(second.id) == nil })
-    #expect(second.transport.isRunning)
+    #expect(try #require(second.transport).isRunning)
   }
 
-  /// Activation of a forward session needs the registered owner running,
-  /// checked before any exit watch is armed: the refusal leaves the
-  /// registration inactive rather than taking the arm-race revocation path.
+  /// Activation of a forward session needs the registered owner running:
+  /// an owner that cannot be watched leaves the registration inactive.
   @Test func forwardActivationNeedsTheRegisteredOwner() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
     let session = try harness.session(
-      [grant(.openAIChat, port: backend.port)], activate: false, transport: .forward)
-    let forward = TransportBinding(
-      pid: session.transport.processIdentifier,
-      start: try #require(ProcessIdentity.of(session.transport.processIdentifier)).start)
-    session.owner.terminate()
-    session.owner.waitUntilExit()
+      [grant(.openAIChat, port: backend.port)], activate: false, transport: .forward,
+      carrier: .spawned)
+    let forward = try TestProcess.binding(try #require(session.transport).processIdentifier)
+    let owner = try #require(session.owner)
+    owner.terminate()
+    owner.waitUntilExit()
     #expect(throws: InferenceError.self) {
       try harness.gateway.activate(
         .init(

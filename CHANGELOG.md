@@ -53,12 +53,28 @@ SPDX-License-Identifier: Apache-2.0
   connections at once, refused for brokered sandboxes), and `inspect`
   reports it. iso requires protocol 6. In the guest, a systemd socket on
   `127.0.0.1:11788` bridges to the relayed socket.
-- **Gateway control protocol 4:** `register_session` declares the session's
+- **Gateway control protocol 5:** `register_session` declares the session's
   transport kind. `owner` (vmnet) activates bound to the registered sandbox
-  owner; `forward` (brokered) activates bound to a live `/usr/bin/ssh` of the
-  same user at the declared start time, while the owner still runs, and is
-  revoked when either exits. Each grant's backend names its front end:
-  `launcher` (a managed backend) or `plain`. Earlier versions are refused.
+  owner; `forward` (brokered) activates bound to another process, which iso
+  checks is this user's `/usr/bin/ssh`, while the owner still runs, and is
+  revoked when either exits. Activation names the process by PID and audit
+  token PID version, and the gateway admits a connection only when its peer
+  token names that process as this user. Each grant's backend names its
+  front end: `launcher` (a managed backend) or `plain`. Earlier versions are
+  refused.
+- **The host keeps no copy of a session's capability.** iso writes it once,
+  when the session is created, into the guest's
+  `~/.config/iso/inference-token` (`0600`, over stdin). Codex's provider key
+  and an attach grant's `ISO_INFERENCE_TOKEN` are read from that file in the
+  guest (the host sends only their names), and Claude's managed settings use
+  an `apiKeyHelper` that prints it instead of `ANTHROPIC_AUTH_TOKEN`. The
+  host's `inference.token` is no longer written, and an old one is removed.
+- **The gateway reads no other process's information.** Its Seatbelt
+  profile denies `process-info*` except for itself (`deny default` alone left
+  `proc_pidinfo` and `proc_pidpath` on this user's processes allowed), and
+  its startup self-test checks the denial. The process checks it made at
+  activation (owner name, `/usr/bin/ssh`, user) are iso's, before it reads
+  the PID version.
 - **Managed backends prove every connection.** Before it sends the token or
   a prompt on a connection to a managed backend, the gateway asks the
   launcher's challenge on that connection and checks the answer. A process

@@ -2117,8 +2117,13 @@ if want inference; then
         check "inference: no provider credential reaches the guest" \
             refuses grep -q "$CANARY" <<<"$(iinf exec inf -- env 2>/dev/null)"
         # shellcheck disable=SC2016 # Expand in the guest.
-        token="$(iinf exec inf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
-        check "inference: Claude's managed settings carry a 64-hex capability" test "${#token}" = 64
+        token="$(iinf exec inf -- cat .config/iso/inference-token 2>/dev/null)"
+        check "inference: the guest holds a 64-hex capability in its token file" test "${#token}" = 64
+        check "inference: Claude reads it with its key helper, and no settings file holds it" \
+            bash -c 'grep -q apiKeyHelper <<<"$1" && ! grep -q "$2" <<<"$1"' _ \
+            "$(iinf exec inf -- cat .claude/settings.json 2>/dev/null)" "$token"
+        check "inference: the host keeps no copy of the capability" \
+            refuses grep -rqs "$token" "$CSTATE/instances/inf"
         body='{"model":"local-claude","max_tokens":64000,"messages":[{"role":"user","content":"hi"}],"stream":true}'
         url=http://127.0.0.1:11788/v1/messages
         check "inference: a request without the capability is refused (401)" \
@@ -2185,7 +2190,7 @@ if want inference; then
         check "inference: and the relay serves again" \
             test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 401
         # shellcheck disable=SC2016 # Expand in the guest.
-        token="$(iinf exec inf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        token="$(iinf exec inf -- cat .config/iso/inference-token 2>/dev/null)"
         # The sandbox owner's exit (VM stop) revokes the session; the next
         # boot registers a fresh one.
         check "inference: iso stop revokes the session" iinf stop inf
@@ -2321,8 +2326,8 @@ while True:
         check "brokered-inference: no provider credential reaches the guest" \
             refuses grep -q "$CANARY" <<<"$(binf exec binf -- env 2>/dev/null)"
         # shellcheck disable=SC2016 # Expand in the guest.
-        token="$(binf exec binf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
-        check "brokered-inference: Claude's managed settings carry a 64-hex capability" test "${#token}" = 64
+        token="$(binf exec binf -- cat .config/iso/inference-token 2>/dev/null)"
+        check "brokered-inference: the guest holds a 64-hex capability in its token file" test "${#token}" = 64
         check "brokered-inference: Claude's managed settings name the same guest URL" \
             binf exec binf -- grep -q "http://127.0.0.1:11788" .claude/settings.json
         body='{"model":"local-claude","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"stream":true}'
@@ -2381,7 +2386,7 @@ echo "$alive"' 2>/dev/null)"
         check "brokered-inference: one forward holds at most 32 guest connections" \
             test -n "$held" -a "${held:-99}" -le 32
         # shellcheck disable=SC2016 # Expand in the guest.
-        token="$(binf exec binf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        token="$(binf exec binf -- cat .config/iso/inference-token 2>/dev/null)"
         check "brokered-inference: and still serves once they close" \
             grep -q '"model":"local-claude"' <<<"$(binf exec binf -- curl -s -H "authorization: Bearer $token" \
                 -H 'content-type: application/json' -d "$body" "$url" 2>/dev/null)"

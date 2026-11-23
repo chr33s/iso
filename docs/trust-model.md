@@ -1031,8 +1031,13 @@ The gateway enforces an API boundary. It does not isolate the host.
   host path is derived by the runtime and checked by `IsolationGate`, and the
   relay closes connections beyond 32 at once. Before activation the controller
   confirms that the gateway reports the registered nonce. Activation binds the
-  session to the instance's sandbox owner process (PID and start time), which
-  the gateway watches with kqueue, and to the sandbox's session deadline. The
+  session to the instance's sandbox owner process, by PID and the audit
+  token's PID version (iso reads both, and checks that the process is this
+  user's `iso-sandbox`), and to the sandbox's session deadline. The gateway
+  watches the process's exit with kqueue and admits a connection only when
+  its peer token (`LOCAL_PEERTOKEN`) names that process, as this user:
+  another process of the user, even with the capability, is refused at
+  connection. The
   VM stopping, the deadline passing, `iso destroy` or `iso inference revoke`
   revokes the session. A restarted gateway starts a new epoch and does not
   reactivate old capabilities.
@@ -1064,9 +1069,16 @@ The gateway enforces an API boundary. It does not isolate the host.
   backlog of 16 refuses the rest, so `ssh` closes that guest channel.
 - **Capability.** A 256-bit capability from the system CSPRNG, compared in
   constant time. It authorizes the whole VM (root in the guest can use it, by
-  design) and only on its own session's socket. It travels through SSH
-  `SendEnv` or Claude's managed `settings.json`, never argv. On the host it is
-  kept only in the owner-only `inference.token` that Codex sessions need.
+  design) and only on its own session's socket. iso writes it once, when the
+  session is created, over SSH stdin into the guest's
+  `~/.config/iso/inference-token` (`0600`), never argv, and keeps no copy on
+  the host (it removes the `inference.token` file older releases kept).
+  Every later SSH session reads it in the guest: Codex's provider key and an
+  attach grant's `ISO_INFERENCE_TOKEN` are set by iso's guest wrapper from
+  that file (the host sends only their names), and Claude's managed
+  `settings.json` names an `apiKeyHelper` that prints it, with no
+  `ANTHROPIC_AUTH_TOKEN`. iso removes that helper again only where it is
+  still its own, so it never outlives `required`.
 - **Request policy.** Routes are exact, bodies are parsed by a strict, bounded
   JSON parser that rejects duplicate keys and checked against a closed
   per-API field table; host-selected knobs and stateful or hosted features are
@@ -1083,10 +1095,13 @@ The gateway enforces an API boundary. It does not isolate the host.
   execution beyond the initial exec of the gateway binary; reads limited to
   system paths, the binary and those directories; outbound only to the
   configured backend ports (rendered per launch); metadata reads (stat) on
-  any path, for path resolution; and read-only process metadata
-  (`process-info-pidinfo`) on any process, because the sandbox owner and
-  the brokered forward it watches cannot be named in the profile. The gateway checks its own
-  confinement at every start. The control socket is `0600`. Both sides check
+  any path, for path resolution; and no information about any other process.
+  `deny default` alone still lets a confined process read this user's other
+  processes with `proc_pidinfo` and `proc_pidpath`, so the profile denies
+  `process-info*` explicitly and allows only the gateway's own; the exit
+  watch and the peer token need neither. The gateway checks its own
+  confinement at every start, including that reading another process's
+  information is denied. The control socket is `0600`. Both sides check
   the peer's UID; the controller also checks that the peer's executable is
   the `iso-inference` beside `iso` (itself held to the runtime's owner and
   write checks, and signed like `iso` in release builds) and that the kernel

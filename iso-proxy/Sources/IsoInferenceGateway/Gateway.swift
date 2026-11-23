@@ -40,12 +40,6 @@ package final class Gateway: Sendable {
   let ticker: Mutex<DispatchSourceTimer?> = Mutex(nil)
   let stopped = Mutex(false)
   let onExit: @Sendable () -> Void
-  /// The command name a transport process must have: the instance's
-  /// sandbox owner (`iso-sandbox`), whose VM carries the relay. A test seam.
-  let transportCommand: String
-  /// The executable a `forward` session's transport must run: the system
-  /// `ssh` the host starts the reverse forward with. A test seam.
-  let forwardExecutable: String
   /// Backend ports the launch profile allows; nil only in tests.
   let backendPorts: Set<UInt16>?
   /// Where session sockets are bound: the host ends of the instances' vsock
@@ -55,7 +49,6 @@ package final class Gateway: Sendable {
   package init(
     group: EventLoopGroup, journal: Journal, audit: AuditLog, limits: GlobalLimits = .defaults,
     relayDirectory: String, backendPorts: Set<UInt16>? = nil,
-    transportCommand: String = "iso-sandbox", forwardExecutable: String = "/usr/bin/ssh",
     timing: GatewayTiming = .standard,
     sharedConnections: Int = SessionLimits.sharedConnections,
     onExit: @escaping @Sendable () -> Void
@@ -64,8 +57,6 @@ package final class Gateway: Sendable {
     self.sharedConnections = SlotPool(sharedConnections)
     self.relayDirectory = relayDirectory
     self.backendPorts = backendPorts
-    self.transportCommand = transportCommand
-    self.forwardExecutable = forwardExecutable
     self.group = group
     self.journal = journal
     self.audit = audit
@@ -285,46 +276,39 @@ package final class Gateway: Sendable {
       session.phase == .inactive
     else { throw InferenceError(.sessionRevoked, "no inactive session with that id") }
     let binding = activation.transport
-    let owner = TransportBinding(pid: session.boot.ownerPID, start: session.boot.ownerStart)
+    let ownerPID = session.boot.ownerPID
     switch session.transportKind {
     case .owner:
-      // The transport is the registration's sandbox owner (§22.4): the boot
-      // identity the host registered, not whatever process activation names.
-      guard binding.pid == session.boot.ownerPID, binding.start == session.boot.ownerStart else {
+      // The transport is the registration's sandbox owner (§22.4).
+      guard binding.pid == ownerPID else {
         throw InferenceError(.policyDenied, "the transport is not the registered sandbox owner")
       }
     case .forward:
-      // The host's reverse forward (§22.9): a live process of this user
-      // running the system `ssh`, started when the binding says.
-      guard isForward(binding) else {
-        throw InferenceError(.policyDenied, "the transport is not this user's ssh forward")
+      // The host's reverse forward (§22.9), a process other than the owner.
+      guard binding.pid != ownerPID else {
+        throw InferenceError(.policyDenied, "a forward session's transport is not the owner")
       }
     }
-    // Either way the registration's sandbox owner still runs the boot.
-    guard isTransport(owner) else {
-      throw InferenceError(.policyDenied, "the transport process does not match")
-    }
-    // A forward session also ends with its boot: the owner's exit revokes it
-    // even while the forward process lingers.
-    let watched = session.transportKind == .owner ? [binding] : [binding, owner]
-    let sources = watched.map { process in
-      let source = DispatchSource.makeProcessSource(
-        identifier: process.pid, eventMask: .exit, queue: .global())
-      source.setEventHandler { [weak self, weak session] in
+    // The bound process and, for a forward session, the registration's
+    // sandbox owner: either exit revokes the session. The host checked their
+    // identity; the gateway reads no other process's information, and binds
+    // each connection to the transport by its peer token instead.
+    let watched = session.transportKind == .owner ? [binding.pid] : [binding.pid, ownerPID]
+    var watches: [ExitWatch] = []
+    for pid in watched {
+      let watch = ExitWatch(pid: pid) { [weak self, weak session] in
         guard let self, let session else { return }
         self.audit.record(
-          "transport_exited",
-          ["session": .string(session.id), "pid": .int(Int64(process.pid))])
+          "transport_exited", ["session": .string(session.id), "pid": .int(Int64(pid))])
         self.revoke(session, reason: "transport-exited")
       }
-      source.resume()
-      return source
-    }
-    // A process may have exited before its source was armed.
-    guard isTransport(owner), session.transportKind == .owner || isForward(binding) else {
-      for source in sources { source.cancel() }
-      revoke(session, reason: "transport-exited")
-      throw InferenceError(.policyDenied, "the transport process exited")
+      // A process that already exited cannot be watched: nothing is bound,
+      // and the registration stays inactive for the host to revoke.
+      guard let watch else {
+        for watch in watches { watch.cancel() }
+        throw InferenceError(.policyDenied, "the transport process exited")
+      }
+      watches.append(watch)
     }
     let deadline = activation.deadlineSeconds.map { ContinuousClock.now + .seconds($0) }
     let activated = session.state.withLock { state -> Bool in
@@ -332,11 +316,11 @@ package final class Gateway: Sendable {
       state.phase = .active
       state.transport = binding
       state.deadline = deadline
-      state.watches = sources
+      state.watches = watches
       return true
     }
     guard activated else {
-      for source in sources { source.cancel() }
+      for watch in watches { watch.cancel() }
       throw InferenceError(.sessionRevoked, "the session was revoked")
     }
     audit.record(
@@ -346,29 +330,6 @@ package final class Gateway: Sendable {
         "transport_kind": .string(session.transportKind.rawValue),
         "deadline_seconds": activation.deadlineSeconds.map { .int($0) } ?? .null,
       ])
-  }
-
-  /// The sandbox owner: the registration's boot identity, live, this user's.
-  func isTransport(_ binding: TransportBinding) -> Bool {
-    guard let identity = ProcessIdentity.of(binding.pid) else { return false }
-    return identity.command == transportCommand && identity.uid == getuid()
-      && identity.start == binding.start
-  }
-
-  func isForward(_ binding: TransportBinding) -> Bool {
-    Self.isForwardProcess(
-      ProcessIdentity.of(binding.pid), executable: ProcessIdentity.executablePath(binding.pid),
-      binding: binding, expected: forwardExecutable, uid: getuid())
-  }
-
-  /// A forward binding names a live process started at the binding's start
-  /// time, owned by `uid`, whose executable is exactly `expected`.
-  package static func isForwardProcess(
-    _ identity: ProcessIdentity?, executable: String?, binding: TransportBinding,
-    expected: String, uid: uid_t
-  ) -> Bool {
-    guard let identity, let executable else { return false }
-    return identity.start == binding.start && identity.uid == uid && executable == expected
   }
 
   @discardableResult
@@ -387,7 +348,7 @@ package final class Gateway: Sendable {
   /// listener and every connection. Idempotent.
   func revoke(_ session: GatewaySession, reason: String) {
     let taken = session.state.withLock {
-      state -> (Channel?, [DispatchSourceProcess], BoundSocket?, [Channel])? in
+      state -> (Channel?, [ExitWatch], BoundSocket?, [Channel])? in
       guard !isRevoked(state.phase) else { return nil }
       state.phase = .revoked(reason)
       defer {
@@ -561,7 +522,13 @@ package enum SessionListener {
         ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16 * 1024)
       )
       .childChannelInitializer { channel in
-        channel.eventLoop.makeCompletedFuture {
+        // Only the bound transport process may connect (§12.3): the peer
+        // token of every connection must name it, as this user.
+        PeerIdentity.of(channel).flatMapThrowing { peer in
+          guard let peer, session.admits(peer) else {
+            gateway.audit.rejected(session: session.id, code: .policyDenied)
+            throw InferenceError(.policyDenied, "the connection is not from the bound transport")
+          }
           var limits = NIOHTTPDecoderLimitConfiguration()
           limits.maxHeaderFieldSize = SessionLimits.headerBytes
           limits.maxHeaderListSize = SessionLimits.headerBytes

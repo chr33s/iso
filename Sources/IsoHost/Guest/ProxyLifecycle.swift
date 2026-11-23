@@ -177,7 +177,7 @@ package struct ProxyLauncher: Sendable {
     // brokered boot's forward is closed with it.
     stopInferenceForward(instance)
     unlink(InferenceController.statePath(instance))
-    unlink(InferenceController.tokenPath(instance))
+    unlink(InferenceController.legacyTokenPath(instance))
   }
 
   /// Start the credential-free CONNECT companion for a filtered boot. A missing

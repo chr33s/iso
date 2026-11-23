@@ -19,7 +19,7 @@ final class FakeGateway: Sendable {
     var epoch = "epoch-1"
     var next = 0
     var override: [String: [String: Any]] = [:]
-    var version = 4
+    var version = 5
     /// The backend ports it was "launched" for.
     var ports: [Int] = []
   }
@@ -210,7 +210,7 @@ private struct Rig {
       diagnostics: guest.sink.diagnostics, isoExecutable: nil, proxies: guest.proxies(resolver),
       boot: { _ in InferenceBoot(ownerPID: getpid(), deadline: nil, carrier: carrier) },
       sandboxExec: "/usr/bin/false", stateDirectory: stateDirectory, relayDirectory: relay,
-      peerCheck: { _ in })
+      peerCheck: { _ in }, carrierCheck: { _, _ in })
   }
 
   func remove() {
@@ -223,25 +223,28 @@ private struct Rig {
 private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
 
 /// §12.2: register, check the nonce, configure the guest, and only then
-/// activate and persist; the capability lands in the owner-only token file.
+/// activate and persist; the capability reaches only the guest
+/// configuration, and the host keeps no copy of it (§12.1).
 @Test func sessionsAreActivatedOnlyAfterTheGuestIsConfigured() throws {
   let rig = try Rig()
   defer { rig.remove() }
   let control = try rig.controller()
   var configuredBeforeActivation = false
+  var capability = ""
   let result = try #require(
-    try control.ensureSession(rig.instance, target: rig.guest.target) { session in
-      #expect(session.token.expose().count == 64)
+    try control.ensureSession(rig.instance, target: rig.guest.target) { _, token in
+      capability = token.expose()
       configuredBeforeActivation = !rig.gateway.ops.contains("activate_session")
     })
+  #expect(capability.count == 64)
   #expect(result.fresh)
   #expect(configuredBeforeActivation)
   let ops = rig.gateway.ops.filter { $0 != "inspect" }
   #expect(ops == ["revoke_session", "register_session", "activate_session"], "\(ops)")
-  // Control protocol 4: the vmnet relay is carried by the sandbox owner, and
+  // Control protocol 5: the vmnet relay is carried by the sandbox owner, and
   // an attached backend is a plain front end, never challenged.
   let registration = try #require(rig.gateway.request("register_session"))
-  #expect(registration["version"] as? Int == 4)
+  #expect(registration["version"] as? Int == 5)
   #expect(registration["transport"] as? String == "owner")
   let backend = (registration["grants"] as? [[String: Any]])?.first?["backend"] as? [String: Any]
   #expect(backend?["front"] as? String == "plain")
@@ -249,7 +252,8 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(rig.guest.log("tunnels.log").isEmpty)
   #expect(result.session.transport == .owner)
   #expect(exists(InferenceController.statePath(rig.instance)))
-  #expect(readFile(InferenceController.tokenPath(rig.instance)) == result.session.token.expose())
+  #expect(!exists(InferenceController.legacyTokenPath(rig.instance)))
+  #expect(!(readFile(InferenceController.statePath(rig.instance)) ?? "").contains(capability))
   // A later command reuses the recorded active session.
   let again = try #require(
     try rig.controller().ensureSession(rig.instance, target: rig.guest.target))
@@ -263,14 +267,14 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   let rig = try Rig()
   defer { rig.remove() }
   #expect(throws: (any Error).self) {
-    try rig.controller().ensureSession(rig.instance, target: rig.guest.target) { _ in
+    try rig.controller().ensureSession(rig.instance, target: rig.guest.target) { _, _ in
       throw HostError("bridge install failed")
     }
   }
   #expect(!rig.gateway.ops.contains("activate_session"))
   #expect(rig.gateway.state.withLock { $0.sessions.isEmpty })
   #expect(!exists(InferenceController.statePath(rig.instance)))
-  #expect(!exists(InferenceController.tokenPath(rig.instance)))
+  #expect(!exists(InferenceController.legacyTokenPath(rig.instance)))
 }
 
 /// The registration must show up with its nonce, inactive, before anything
@@ -530,8 +534,8 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(blocked["ANTHROPIC_AUTH_TOKEN"] == AgentBootstrap.noSessionToken)
   #expect(
     agents.codexInferenceTable(nil).document.contains(#"base_url = "http://127.0.0.1:11788/v1""#))
-  let session = InferenceSession(
-    sessionID: "s", epoch: "e", token: Secret(String(repeating: "c", count: 64)), services: [])
+  let session = InferenceSession(sessionID: "s", epoch: "e", services: [])
+  #expect(agents.claudeKeyHelper(nil) == nil, "no session: the refused token stands")
   #expect(AgentBootstrap.attachBaseURL(.anthropicCountTokens, session) == "http://127.0.0.1:11788")
   #expect(AgentBootstrap.attachBaseURL(.anthropicMessages, session) == "http://127.0.0.1:11788")
   #expect(AgentBootstrap.attachBaseURL(.openAIChat, session) == "http://127.0.0.1:11788/v1")
@@ -553,9 +557,9 @@ private func forwardMaster(_ rig: Rig) -> Int32? {
 }
 
 /// The activation's transport binding.
-private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
+private func activationTransport(_ rig: Rig) -> (pid: Int?, version: Int?) {
   let transport = rig.gateway.request("activate_session")?["transport"] as? [String: Any]
-  return (transport?["pid"] as? Int, transport?["start"] as? String)
+  return (transport?["pid"] as? Int, transport?["version"] as? Int)
 }
 
 /// A brokered session registers as `forward`, starts exactly the fixed
@@ -569,7 +573,7 @@ private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
   let result = try #require(
     try rig.controller(carrier: rig.forward()).ensureSession(
       rig.instance, target: rig.guest.target
-    ) { _ in
+    ) { _, _ in
       forwardedBeforeConfiguration = !rig.guest.log("tunnels.log").isEmpty
     })
   defer { if let pid = forwardMaster(rig) { kill(pid, SIGKILL) } }
@@ -595,7 +599,7 @@ private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
   #expect(master != getpid())
   let bound = activationTransport(rig)
   #expect(bound.pid == Int(master))
-  #expect(bound.start == HostProcess.start(master))
+  #expect(bound.version.map(UInt32.init) == HostProcess.pidVersion(master))
   let state = try #require(readFile(InferenceController.statePath(rig.instance)))
   #expect(state.contains(#""transport" : "forward""#), "\(state)")
   #expect(state.contains(#""forward_pid" : \#(master)"#), "\(state)")
@@ -771,7 +775,7 @@ private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
   #expect(waitUntil { master.map { !isRunning($0) } ?? false }, "a refused activation's forward")
   #expect(forwardMaster(rig) == nil)
   #expect(!exists(InferenceController.statePath(rig.instance)))
-  #expect(!exists(InferenceController.tokenPath(rig.instance)))
+  #expect(!exists(InferenceController.legacyTokenPath(rig.instance)))
 }
 
 /// ssh splits `-R` on `:`, and a Unix socket path must fit sun_path: any
@@ -857,6 +861,68 @@ private func waitUntil(_ condition: () -> Bool) -> Bool {
     #expect(bridged == !brokered, "brokered \(brokered)")
     let settings = rig.guest.guestFile(".claude/settings.json") ?? ""
     #expect(settings.contains("http://127.0.0.1:11788"), "\(settings)")
-    #expect(settings.contains(result.session.token.expose()))
+    // The capability is in the guest's token file, read by Claude's key
+    // helper, and in no settings file.
+    let token = rig.guest.guestFile(GuestHomeFile.inferenceToken.rawValue) ?? ""
+    #expect(token.count == 64, "\(token)")
+    #expect(settings.contains(#""apiKeyHelper":"#) && !settings.contains(token))
+    #expect(!settings.contains("ANTHROPIC_AUTH_TOKEN"))
   }
+}
+
+/// Every SSH session gets the capability from the guest's token file, never
+/// from the host: Codex's provider key and an attach grant's token are
+/// guest-file variables, and only the grant's URL and model are sent.
+@Test func sshSessionsReadTheCapabilityInTheGuest() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let responses = try TCPListener(address: "127.0.0.1")
+  defer { responses.close() }
+  rig.gateway.state.withLock { $0.ports.append(Int(responses.port)) }
+  let config = try testConfig(
+    #"""
+    "inference": {
+      "mode": "required",
+      "qualification_profiles": {
+        "p": {"protocol": "anthropic-messages", "completion_evidence": "drain",
+          "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+          "max_input_bytes": 1024},
+        "r": {"protocol": "openai-responses", "completion_evidence": "drain",
+          "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+          "max_input_bytes": 1024}},
+      "backends": {
+        "b": {"isolation": "unverified", "base_url": "http://127.0.0.1:\#(rig.backends[0].port)",
+          "protocol": "anthropic-messages", "qualification_profile": "p"},
+        "c": {"isolation": "unverified", "base_url": "http://127.0.0.1:\#(responses.port)",
+          "protocol": "openai-responses", "qualification_profile": "r"}},
+      "services": {
+        "s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["anthropic-messages"],
+          "max_context_tokens": 1000},
+        "x": {"backend": "c", "upstream_model": "m", "frontend_apis": ["openai-responses"],
+          "max_context_tokens": 1000}}
+    },
+    "claude": {"local_model": {"service": "s"}},
+    "codex": {"local_model": {"service": "x"}}
+    """#)
+  try InferenceAttachGrant(service: try InferenceServiceName("s"), api: .anthropicMessages)
+    .save(rig.instance)
+  let agents = AgentBootstrap(
+    config: config, client: rig.guest.client, environment: rig.guest.environment,
+    home: rig.guest.root + "/hosthome",
+    resolver: CredentialResolver(environment: rig.guest.environment),
+    proxies: rig.guest.proxies(), github: NoGitHub(), diagnostics: rig.guest.sink.diagnostics,
+    inference: try rig.controller(config))
+  var env = EnvForward()
+  try agents.inferenceEnvironment(rig.instance, target: rig.guest.target, into: &env)
+  let fromGuest = env.guestFiles.map(\.name).sorted()
+  #expect(
+    fromGuest == [AgentBootstrap.attachVariables.token, ModelRouting.codexLocalEnvKey].sorted())
+  #expect(env.guestFiles.allSatisfy { $0.file == .inferenceToken })
+  #expect(
+    env.names.sorted()
+      == [AgentBootstrap.attachVariables.baseURL, AgentBootstrap.attachVariables.model].sorted())
+  let token = try #require(rig.guest.guestFile(GuestHomeFile.inferenceToken.rawValue))
+  let prepared = try env.prepare("true", terminal: .requested)
+  #expect(!prepared.remote.contains(token))
+  #expect(!prepared.environment([:]).values.contains(token))
 }

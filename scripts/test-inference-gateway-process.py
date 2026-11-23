@@ -5,10 +5,11 @@
 
 Starts the real binary under `sandbox-exec` with the gateway Seatbelt profile
 (Sources/IsoHost/Guest/Resources/seatbelt-inference.sb) and a private state directory, then
-drives it over its control socket: a stand-in sandbox owner process (a
-sleeper built as `iso-sandbox`) as the session's
-transport, a loopback fake backend, and a raw HTTP client. No network, VM or
-credential is used. Build first:
+drives it over its control socket. Stand-in carrier processes (each a small
+HTTP client this script drives over a pipe) play the sandbox owner and the
+brokered forward, since the gateway admits connections only from the bound
+process, by its peer token; a loopback fake backend answers. No network, VM
+or credential is used. Build first:
 
     swift build --package-path iso-proxy --product iso-inference
 """
@@ -84,6 +85,72 @@ def process_start(pid):
     return f"{info.start_sec}.{info.start_usec}"
 
 
+def pid_version(pid):
+    """The audit token's PID version of `pid`, read as the host controller does."""
+    libc = ctypes.CDLL(None)
+    task_self = ctypes.c_uint.in_dll(libc, "mach_task_self_")
+    name = ctypes.c_uint(0)
+    if libc.task_name_for_pid(task_self, pid, ctypes.byref(name)) != 0:
+        raise SystemExit(f"cannot read process {pid}")
+    token, count = (ctypes.c_uint * 8)(), ctypes.c_uint(8)
+    if libc.task_info(name, 15, token, ctypes.byref(count)) != 0:  # TASK_AUDIT_TOKEN
+        raise SystemExit(f"cannot read the audit token of {pid}")
+    return token[7]
+
+
+# A carrier: sends one request per line of JSON on stdin to the session
+# socket it names, and prints the response status (0 when the gateway closes
+# the connection without answering).
+CARRIER = r"""
+import json, socket, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    status = 0
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(10)
+        s.connect(request["socket"])
+        head = "POST /v1/chat/completions HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\n"
+        if request["token"]:
+            head += "authorization: Bearer " + request["token"] + "\r\n"
+        body = request["body"].encode()
+        head += "content-length: %d\r\n\r\n" % len(body)
+        s.sendall(head.encode() + body)
+        data = b""
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        s.close()
+        if data:
+            status = int(data.split(b" ")[1])
+    except OSError:
+        status = 0
+    print(status, flush=True)
+"""
+
+
+class Carrier:
+    def __init__(self):
+        self.process = subprocess.Popen([sys.executable, "-I", "-c", CARRIER],
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.pid = self.process.pid
+
+    def request(self, path, token, body):
+        self.process.stdin.write(json.dumps(
+            {"socket": str(path), "token": token, "body": body.decode()}) + "\n")
+        self.process.stdin.flush()
+        return int(self.process.stdout.readline())
+
+    def binding(self):
+        return {"pid": self.pid, "version": pid_version(self.pid)}
+
+    def kill(self):
+        self.process.kill()
+        self.process.wait()
+
+
 def control(state, message):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(str(state / "control.sock"))
@@ -111,7 +178,8 @@ def http(path, token, body):
     while chunk := s.recv(65536):
         data += chunk
     s.close()
-    return int(data.split(b" ")[1]), data
+    # A connection the gateway closes unanswered is status 0.
+    return (int(data.split(b" ")[1]) if data else 0), data
 
 
 def main():
@@ -170,17 +238,9 @@ def main():
     second = subprocess.run(confined, capture_output=True, timeout=30)
     check("a second gateway exits on the startup lock (status 3)", second.returncode == 3)
 
-    # The transport is the instance's sandbox owner, whose command is
-    # `iso-sandbox`; a tiny sleeper built under that name stands in for it
-    # (copies and symlinks of /bin/sleep keep the name `sleep`).
-    owner_binary = state.parent / (state.name + "-bin") / "iso-sandbox"
-    owner_binary.parent.mkdir()
-    subprocess.run(["/usr/bin/cc", "-x", "c", "-", "-o", str(owner_binary)], check=True,
-                   input=b"#include <stdlib.h>\n#include <unistd.h>\n"
-                         b"int main(int c, char **v) { sleep(atoi(v[1])); return 0; }\n")
-    owner = subprocess.Popen([str(owner_binary), "60"])
-    # Another process under the same name, which is not this boot's owner.
-    impostor = subprocess.Popen([str(owner_binary), "60"])
+    # The sandbox owner and another process of this user that is not it.
+    owner = Carrier()
+    impostor = Carrier()
     time.sleep(0.5)
 
     profile = {"name": "p", "protocol": "openai-chat", "completion_evidence": "drain",
@@ -189,7 +249,7 @@ def main():
                "max_input_bytes": 1048576, "max_request_body_bytes": 4194304, "token_counter": "none"}
     def registration(port, name="dev", socket="8e84b04d471a546a.sock", transport="owner"):
         return {
-            "version": 4, "op": "register_session", "instance": {"data_root": "/x", "name": name},
+            "version": 5, "op": "register_session", "instance": {"data_root": "/x", "name": name},
             "boot": {"owner_pid": owner.pid, "owner_start": process_start(owner.pid)},
             "nonce": "0" * 32,
             "socket": socket, "transport": transport,
@@ -215,66 +275,63 @@ def main():
     check("a session socket name outside the relay directory is refused",
           control(state, traversal).get("ok") is False)
     body = json.dumps({"model": "local-coder", "messages": [{"role": "user", "content": "hi"}]}).encode()
-    check("an inactive session refuses requests", http(session_socket, token, body)[0] == 401)
+    check("an inactive session admits no connection, even the owner's",
+          owner.request(session_socket, token, body) == 0)
 
-    sleeper = subprocess.Popen(["/bin/sleep", "60"])
-    def activation(pid, session=None, **extra):
+    def activation(carrier, session=None, **extra):
         session = session or registered
-        return {"version": 4, "op": "activate_session", "session_id": session["session_id"],
-                "epoch": session["epoch"],
-                "transport": {"pid": pid, "start": process_start(pid)}, **extra}
+        return {"version": 5, "op": "activate_session", "session_id": session["session_id"],
+                "epoch": session["epoch"], "transport": carrier.binding(), **extra}
 
     version_two = dict(registration(backend_port, name="old", socket="0123.sock"), version=2)
     check("a version 2 registration (no transport kind) is refused",
           control(state, version_two).get("ok") is False)
 
-    wrong = control(state, activation(sleeper.pid))
-    check("activation refuses a transport that is not the sandbox owner", wrong.get("ok") is False)
-    sleeper.kill()
-    wrong = control(state, activation(impostor.pid))
-    check("activation refuses an iso-sandbox process that is not the registered owner",
+    wrong = control(state, activation(impostor))
+    check("activation refuses a transport that is not the registered sandbox owner",
           wrong.get("ok") is False)
-    impostor.kill()
-    activated = control(state, activation(owner.pid, deadline_seconds=3600))
+    activated = control(state, activation(owner, deadline_seconds=3600))
     check("activation binds the session to the sandbox owner process", activated.get("ok") is True)
 
-    check("a request without the capability is refused", http(session_socket, None, body)[0] == 401)
-    status, reply = http(session_socket, token, body)
-    check("an authorized request is served", status == 200 and b'"local-coder"' in reply)
+    check("a request without the capability is refused",
+          owner.request(session_socket, None, body) == 401)
+    check("an authorized request from the bound owner is served",
+          owner.request(session_socket, token, body) == 200)
     check("the backend saw the upstream model and no guest credential",
           received and received[-1][2]["model"] == "real" and "authorization" not in received[-1][1])
+    seen = len(received)
+    check("another process of this user, with the capability, is refused at connection",
+          impostor.request(session_socket, token, body) == 0)
+    check("so is this script's own process", http(session_socket, token, body)[0] == 0)
+    check("a refused connection reaches no backend", len(received) == seen)
+    impostor.kill()
 
-    # A `forward` session (the brokered transport) binds the host's ssh
-    # reverse forward: the confined gateway reads the executable of a live
-    # /usr/bin/ssh (waiting on a silent ProxyCommand) and of nothing else.
+    # A `forward` session (the brokered transport) binds the host's reverse
+    # forward, another process than the owner; which program it runs is the
+    # host controller's check.
     forwarded = control(state, registration(
         backend_port, name="brokered", socket="0abc.sock", transport="forward"))
     check("a forward registration succeeds", forwarded.get("ok") is True)
-    ssh = subprocess.Popen(["/usr/bin/ssh", "-F", "none", "-o", "BatchMode=yes",
-                            "-o", "ProxyCommand=/bin/sleep 60", "forward.invalid"],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
+    forward = Carrier()
     time.sleep(0.5)
-    other = subprocess.Popen(["/bin/sleep", "60"])
-    check("forward activation refuses a process that is not ssh",
-          control(state, activation(other.pid, forwarded)).get("ok") is False)
     check("forward activation refuses the sandbox owner",
-          control(state, activation(owner.pid, forwarded)).get("ok") is False)
-    other.kill()
-    check("forward activation binds this user's /usr/bin/ssh",
-          control(state, activation(ssh.pid, forwarded)).get("ok") is True)
-    status, _ = http(relay / forwarded["socket"], forwarded["capability"], body)
-    check("a forward session serves an authorized request", status == 200)
-    ssh.kill()
-    ssh.wait()
+          control(state, activation(owner, forwarded)).get("ok") is False)
+    check("forward activation binds the declared forward",
+          control(state, activation(forward, forwarded)).get("ok") is True)
+    forward_socket = relay / forwarded["socket"]
+    check("a forward session serves its forward",
+          forward.request(forward_socket, forwarded["capability"], body) == 200)
+    check("and refuses the owner's connections",
+          owner.request(forward_socket, forwarded["capability"], body) == 0)
+    forward.kill()
     time.sleep(1.5)
-    live = [s["session_id"] for s in control(state, {"version": 4, "op": "inspect"})["sessions"]]
+    live = [s["session_id"] for s in control(state, {"version": 5, "op": "inspect"})["sessions"]]
     check("the forward's exit revokes its session", forwarded["session_id"] not in live
           and registered["session_id"] in live)
 
     owner.kill()
     time.sleep(1.5)
-    sessions = control(state, {"version": 4, "op": "inspect"})["sessions"]
+    sessions = control(state, {"version": 5, "op": "inspect"})["sessions"]
     check("the sandbox owner's exit revokes the session", sessions == [])
     try:
         http(session_socket, token, body)
@@ -284,7 +341,7 @@ def main():
     check("a revoked session's socket refuses connections", refused)
     check("revocation removes the session socket file", not session_socket.exists())
 
-    busy = control(state, {"version": 4, "op": "shutdown", "force": False})
+    busy = control(state, {"version": 5, "op": "shutdown", "force": False})
     check("shutdown succeeds with no sessions", busy.get("ok") is True)
     gateway.wait(timeout=10)
     check("the gateway exits cleanly", gateway.returncode == 0)
