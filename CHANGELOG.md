@@ -32,7 +32,8 @@ SPDX-License-Identifier: Apache-2.0
   at once: the gateway accepts 16 per session and a `forward` session's
   socket has a listen backlog of 16. A forward that exits revokes the
   instance as `iso inference revoke` does, until the VM restarts or `iso
-  inference attach` grants it again; iso never silently registers a new
+  inference attach` grants it again (`iso inference status` lists it as
+  revoked, reason `forward-exited`); iso never silently registers a new
   session over a new forward. Agents use `http://127.0.0.1:11788` on both. See the
   [`inference` section](docs/configuration.md#inference-section) and the
   [design](docs/design/secure-local-inference-spec.md).

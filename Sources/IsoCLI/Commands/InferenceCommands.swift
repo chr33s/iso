@@ -68,6 +68,7 @@ struct InferenceStatus: ParsableCommand {
       let gateway: [String: JSONValue]? =
         if case .verified = state { try controller.inspect(instance) } else { nil }
       let checks = Self.hostChecks(context, controller)
+      let revoked = try Self.revocations(context, instance)
       if json {
         var members: [(String, OutputJSON)] = [
           ("mode", .string(context.config.inference.mode.rawValue)),
@@ -89,6 +90,7 @@ struct InferenceStatus: ParsableCommand {
             if let value = gateway[key] { members.append((key, inferenceJSON(value))) }
           }
         }
+        members.append(("revoked", Self.revokedJSON(revoked)))
         members.append(("host_checks", checks.json))
         context.output.write(OutputJSON.object(members).rendered())
         return
@@ -101,6 +103,7 @@ struct InferenceStatus: ParsableCommand {
           "Backend host:   \(name) run_as \(result.runAs.account ?? "-") verified \(Self.flag(result.runAs.passed)) authenticated \(Self.flag(result.authenticated)) challenge \(Self.flag(result.challenged)) confined \(Self.flag(result.confined)) isolation_verified \(result.isolationVerified)"
         )
       }
+      for line in Self.revokedLines(revoked) { out(line) }
       if case .unverified(let pid, _, let reason) = state {
         out("Gateway:        UNVERIFIED (pid \(pid)): \(reason)")
         throw ExitCode(1)
@@ -110,6 +113,40 @@ struct InferenceStatus: ParsableCommand {
         return
       }
       Self.printGateway(context, gateway)
+    }
+  }
+
+  /// The instances (the named one, or every instance) that stay revoked
+  /// until they restart or are attached, and why.
+  static func revocations(_ context: CommandContext, _ instance: Instance?) throws
+    -> [(name: String, reason: InferenceController.Revocation)]
+  {
+    let instances = try instance.map { [$0] } ?? InstanceStore.list(context.config)
+    return instances.compactMap { instance in
+      InferenceController.revocation(instance).map { (instance.name.rawValue, $0) }
+    }
+  }
+
+  static func revokedJSON(
+    _ revoked: [(name: String, reason: InferenceController.Revocation)]
+  ) -> OutputJSON {
+    .array(
+      revoked.map {
+        .object([("instance", .string($0.name)), ("reason", .string($0.reason.rawValue))])
+      })
+  }
+
+  static func revokedLines(
+    _ revoked: [(name: String, reason: InferenceController.Revocation)]
+  ) -> [String] {
+    revoked.map { name, reason in
+      let cause =
+        switch reason {
+        case .manual: "by `iso inference revoke`"
+        case .forwardExited: "its inference forward exited"
+        }
+      return
+        "Revoked:        \(name) \(reason.rawValue) (\(cause)); restart the VM (`iso stop \(name)`, then `iso start \(name)`) or run `iso inference attach \(name)`"
     }
   }
 

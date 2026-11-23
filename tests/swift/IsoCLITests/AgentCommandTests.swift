@@ -333,3 +333,38 @@ private let requiredInference = #"""
   #expect(fixture.streams.stdout.contains { $0.contains("guarded — s → b") })
   #expect(fixture.streams.stdout.contains { $0.contains("Codex") && $0.contains("refused") })
 }
+
+/// `iso inference status` names each revoked instance, its reason and the
+/// way out, in text and as the `revoked` JSON member; an unknown marker
+/// reads as a manual revocation (fail closed).
+@Test func inferenceStatusReportsRevokedInstances() throws {
+  let fixture = try CLIFixture(requiredInference)
+  defer { fixture.remove() }
+  let instance = try InstanceStore.resolve(fixture.context.config, name: nil)
+  #expect(try InferenceStatus.revocations(fixture.context, nil).isEmpty)
+  #expect(InferenceStatus.revokedJSON([]).compactRendered() == "[]")
+
+  let marker = URL(fileURLWithPath: InferenceController.revokedPath(instance))
+  try Data("forward-exited\n".utf8).write(to: marker)
+  for scope in [nil, instance] {
+    let revoked = try InferenceStatus.revocations(fixture.context, scope)
+    #expect(revoked.map(\.name) == ["dev"] && revoked.map(\.reason) == [.forwardExited])
+  }
+  let revoked = try InferenceStatus.revocations(fixture.context, nil)
+  #expect(
+    InferenceStatus.revokedJSON(revoked).compactRendered()
+      == #"[{"instance":"dev","reason":"forward-exited"}]"#)
+  let line = try #require(InferenceStatus.revokedLines(revoked).first)
+  #expect(line.hasPrefix("Revoked:        dev forward-exited (its inference forward exited)"))
+  #expect(line.contains("`iso stop dev`") && line.contains("`iso inference attach dev`"))
+
+  try Data("revoked\n".utf8).write(to: marker)
+  #expect(
+    InferenceStatus.revokedLines(try InferenceStatus.revocations(fixture.context, nil)).first?
+      .hasPrefix("Revoked:        dev revoked (by `iso inference revoke`)") == true)
+  try Data("garbage\n".utf8).write(to: marker)
+  #expect(try InferenceStatus.revocations(fixture.context, nil).map(\.reason) == [.manual])
+
+  InferenceController.clearManualRevocation(instance)
+  #expect(try InferenceStatus.revocations(fixture.context, instance).isEmpty)
+}

@@ -191,7 +191,7 @@ package struct InferenceController: Sendable {
 
   static func statePath(_ instance: Instance) -> String { instance.directory + "/inference.json" }
   static func tokenPath(_ instance: Instance) -> String { instance.directory + "/inference.token" }
-  static func revokedPath(_ instance: Instance) -> String {
+  package static func revokedPath(_ instance: Instance) -> String {
     instance.directory + "/inference-revoked"
   }
 
