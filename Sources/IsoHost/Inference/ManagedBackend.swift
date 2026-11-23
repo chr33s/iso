@@ -209,6 +209,12 @@ package struct SystemTools: Sendable {
   package var chmod: @Sendable (String, mode_t) -> Int32 = { path, mode in
     Darwin.fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW)
   }
+  /// Removes an entry's extended ACL, never following a final symbolic link.
+  package var clearACL: @Sendable (String) -> Int32 = { path in
+    guard let empty = acl_init(0) else { return -1 }
+    defer { acl_free(UnsafeMutableRawPointer(empty)) }
+    return acl_set_link_np(path, ACL_TYPE_EXTENDED, empty)
+  }
 
   package init() {}
 }
@@ -632,33 +638,82 @@ package struct ManagedBackendProvisioner: Sendable {
 
   /// Root-owned, world-readable, nothing writable by others, no set-id
   /// bits (directories and files with an execute bit `0755`, other files
-  /// `0644`); no symlinks in model weights (a Python tree's links are
-  /// allowed). The tree
-  /// was written by the role account, which may still have a process
-  /// running, so nothing here follows a link: ownership is taken first
-  /// (`lchown`), which ends the role's ability to change the tree; a second
-  /// walk over the now root-owned tree sets modes with `fchmodat(…,
-  /// AT_SYMLINK_NOFOLLOW)` and checks ownership, catching entries created
-  /// during the first walk.
+  /// `0644`), no extended ACL; no symlinks in model weights (a Python
+  /// tree's links are allowed) and no hard links, FIFOs, sockets or devices.
+  /// The tree was written by the role account, which may still have a
+  /// process running, so nothing here follows a link:
+  ///
+  /// 1. Every directory is taken: `lchown`, then its ACL cleared (an entry
+  ///    could let the role change the mode back), then closed to `0755`.
+  /// 2. The tree is listed again. Every directory must now be root's, closed
+  ///    and without an ACL, so the role can no longer add, rename or remove
+  ///    an entry anywhere in it; one that is not (created during the first
+  ///    walk) fails the takeover before any file is touched.
+  /// 3. Every other entry in that listing is checked before root touches it,
+  ///    then taken, its ACL cleared and its mode set. A regular file must
+  ///    have one link: another could name a file outside the tree whose
+  ///    owner, ACL and mode root would otherwise change.
+  /// 4. A last listing changes nothing and must show the result, with no
+  ///    symbolic link in model weights.
   func restrict(_ path: String, allowLinks: Bool = false) throws {
-    for (entry, _) in try Self.entries(under: path) where tools.chown(entry, 0, 0) != 0 {
-      throw HostError.posix("Failed to take ownership of", entry)
+    for (entry, info) in try Self.entries(under: path) where Self.kind(info) == S_IFDIR {
+      guard tools.chown(entry, 0, 0) == 0, tools.clearACL(entry) == 0,
+        tools.chmod(entry, 0o755) == 0
+      else { throw HostError.posix("Failed to take ownership of", entry) }
     }
-    for (entry, info) in try Self.entries(under: path) {
-      if (info.st_mode & S_IFMT) == S_IFLNK {
-        guard allowLinks else {
-          throw HostError("model directories may not contain symbolic links (\(entry))")
-        }
+    let tree = try Self.entries(under: path)
+    for (entry, info) in tree where Self.kind(info) == S_IFDIR {
+      guard isRestricted(entry, info) else {
+        throw HostError("\(entry) changed while the tree was taken over")
+      }
+    }
+    for (entry, info) in tree where Self.kind(info) != S_IFDIR {
+      switch Self.kind(info) {
+      case S_IFLNK:
+        // A symbolic link carries no ACL and its mode is never consulted;
+        // the last listing refuses one in model weights.
         guard tools.chown(entry, 0, 0) == 0 else {
           throw HostError.posix("Failed to take ownership of", entry)
         }
-        continue
+      case S_IFREG:
+        guard info.st_nlink == 1 else {
+          throw HostError(
+            "\(entry) has \(info.st_nlink) hard links; a provisioned tree may not contain hard links"
+          )
+        }
+        guard tools.chown(entry, 0, 0) == 0, tools.clearACL(entry) == 0,
+          tools.chmod(entry, info.st_mode & 0o111 != 0 ? 0o755 : 0o644) == 0
+        else { throw HostError.posix("Failed to restrict", entry) }
+      default:
+        throw HostError("\(entry) is not a regular file, directory or symbolic link")
       }
-      let executable = (info.st_mode & S_IFMT) == S_IFDIR || info.st_mode & 0o111 != 0
-      guard info.st_uid == 0 || info.st_uid == tools.privilegedUID || tools.chown(entry, 0, 0) == 0,
-        tools.chmod(entry, executable ? 0o755 : 0o644) == 0
-      else { throw HostError.posix("Failed to restrict", entry) }
     }
+    for (entry, info) in try Self.entries(under: path) {
+      let link = Self.kind(info) == S_IFLNK
+      if link, !allowLinks {
+        throw HostError("model directories may not contain symbolic links (\(entry))")
+      }
+      guard link ? isOwned(info) : isRestricted(entry, info) else {
+        throw HostError("\(entry) changed while the tree was taken over")
+      }
+    }
+  }
+
+  private static func kind(_ info: stat) -> mode_t { info.st_mode & S_IFMT }
+
+  private func isOwned(_ info: stat) -> Bool {
+    info.st_uid == 0 || info.st_uid == tools.privilegedUID
+  }
+
+  /// Root's, writable by no one else, no set-id bits and no extended ACL.
+  private func isRestricted(_ entry: String, _ info: stat) -> Bool {
+    isOwned(info) && info.st_mode & 0o7022 == 0 && !Self.hasACL(entry)
+  }
+
+  static func hasACL(_ path: String) -> Bool {
+    guard let acl = acl_get_link_np(path, ACL_TYPE_EXTENDED) else { return false }
+    acl_free(UnsafeMutableRawPointer(acl))
+    return true
   }
 
   func awaitHealthy(port: UInt16, token: Secret<String>) throws {

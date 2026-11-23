@@ -1139,8 +1139,12 @@ The gateway enforces an API boundary. It does not isolate the host.
   `seatbelt-inference-backend.sb` (no outbound network, writes only to its
   cache). Every download runs as the role account in a staging directory.
   These are `install`'s standalone CPython and its locked wheels, and a
-  model `fetch`. Root takes each tree over (`lchown` first, then modes set
-  without following links) before anything runs from it. `install` pins
+  model `fetch`. Root takes each tree over before anything runs from it,
+  following no link: every directory first (`lchown`, extended ACL removed,
+  `0755`), so the role can no longer change the namespace, then each file
+  (`lchown`, ACL removed, `0644` or `0755`). It refuses a hard link (which
+  could name a file outside the tree), a FIFO, socket or device, and an
+  entry that changed during the takeover. `install` pins
   what it downloads. Root reads the CPython archive once, as a regular file
   with one link, and refuses it unless its size and SHA-256 match the ones
   iso ships. The role account then unpacks root's checked copy. pip runs

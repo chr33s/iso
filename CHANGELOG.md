@@ -119,6 +119,12 @@ SPDX-License-Identifier: Apache-2.0
   `install` built the venv from `/usr/bin/python3` (CPython 3.9), for which
   mlx publishes no wheels, so it could not succeed.
   `scripts/lock-mlx-lm.py` regenerates the lock with uv.
+- **Provisioning's takeover of a role-built tree** (the Python installation
+  and the model) closes every directory (root-owned, `0755`, extended ACL
+  removed) before it touches a file, then takes each file and removes its
+  ACL. It refuses a hard link, FIFO, socket or device, and fails unless a
+  last listing shows the result. Before, it cleared no ACL, and a hard link
+  could have made root change a file outside the tree.
 - **Release archives** carry `iso-inference`.
 
 ### Changed

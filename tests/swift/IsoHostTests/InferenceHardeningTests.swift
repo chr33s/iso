@@ -576,11 +576,113 @@ private func managedBackend(_ confinement: String = "seatbelt", isolation: Strin
     }
     return 0
   }
+  // The final listing, not a failed ACL call on the link, refuses the swap.
+  tools.clearACL = { _ in 0 }
   let provisioner = ManagedBackendProvisioner(tools: tools, log: { _ in })
   #expect(throws: HostError.self) { try provisioner.restrict(root + "/weights") }
   #expect(mode(outside) == 0o600)
   try? provisioner.restrict(root + "/weights", allowLinks: true)
   #expect(mode(outside) == 0o600)
+}
+
+/// The takeover clears every extended ACL: one could grant the role account
+/// write access that ownership and mode no longer do.
+@Test func restrictingATreeClearsItsACLs() throws {
+  let root = try scratchDirectory("restrict-acl")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try writeFile(root + "/tree/bin/python3", "x", mode: 0o755)
+  for (path, entry) in [
+    (root + "/tree/bin/python3", "everyone allow write"),
+    (root + "/tree/bin", "everyone allow add_file"),
+  ] {
+    let chmod = Process()
+    chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+    chmod.arguments = ["+a", entry, path]
+    try chmod.run()
+    chmod.waitUntilExit()
+    try #require(chmod.terminationStatus == 0 && hasACL(path))
+  }
+  var tools = SystemTools()
+  tools.privilegedUID = getuid()
+  tools.chown = { _, _, _ in 0 }
+  try ManagedBackendProvisioner(tools: tools, log: { _ in }).restrict(root + "/tree")
+  #expect(!hasACL(root + "/tree/bin/python3") && !hasACL(root + "/tree/bin"))
+  #expect(mode(root + "/tree/bin/python3") == 0o755)
+}
+
+/// A hard link could name a file outside the tree: root never takes it, and
+/// the file outside keeps its owner, mode and ACL.
+@Test func restrictingATreeRefusesHardLinksAndSpecialFiles() throws {
+  let root = try scratchDirectory("restrict-link")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let outside = root + "/outside"
+  try writeFile(outside, "secret", mode: 0o600)
+  try writeFile(root + "/tree/model.safetensors", "weights", mode: 0o600)
+  try #require(link(outside, root + "/tree/linked") == 0)
+  var tools = SystemTools()
+  tools.privilegedUID = getuid()
+  let taken = Mutex<[String]>([])
+  tools.chown = { path, _, _ in
+    taken.withLock { $0.append(path) }
+    return 0
+  }
+  let provisioner = ManagedBackendProvisioner(tools: tools, log: { _ in })
+  #expect(throws: HostError.self) { try provisioner.restrict(root + "/tree", allowLinks: true) }
+  #expect(!taken.withLock { $0 }.contains(root + "/tree/linked"))
+  #expect(mode(outside) == 0o600)
+  unlink(root + "/tree/linked")
+  try #require(mkfifo(root + "/tree/fifo", 0o600) == 0)
+  #expect(throws: HostError.self) { try provisioner.restrict(root + "/tree", allowLinks: true) }
+  unlink(root + "/tree/fifo")
+  try provisioner.restrict(root + "/tree", allowLinks: true)
+  #expect(mode(root + "/tree/model.safetensors") == 0o644)
+}
+
+private func hasACL(_ path: String) -> Bool { ManagedBackendProvisioner.hasACL(path) }
+
+/// The takeover trusts no call's result: a tree left writable fails.
+@Test func restrictingATreeVerifiesItsResult() throws {
+  let root = try scratchDirectory("restrict-verify")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try writeFile(root + "/tree/model.safetensors", "weights", mode: 0o666)
+  var tools = SystemTools()
+  tools.privilegedUID = getuid()
+  tools.chown = { _, _, _ in 0 }
+  let directories = tools.chmod
+  tools.chmod = { path, mode in path.hasSuffix(".safetensors") ? 0 : directories(path, mode) }
+  #expect(throws: HostError.self) {
+    try ManagedBackendProvisioner(tools: tools, log: { _ in }).restrict(root + "/tree")
+  }
+}
+
+/// A directory the role left writable is closed before any file is taken,
+/// and one that appears while the directories are taken fails the takeover
+/// before root touches a file.
+@Test func restrictingATreeClosesEveryDirectoryBeforeTakingFiles() throws {
+  let root = try scratchDirectory("restrict-open")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try writeFile(root + "/tree/sub/model.safetensors", "weights", mode: 0o666)
+  try #require(chmod(root + "/tree/sub", 0o777) == 0)
+  var tools = SystemTools()
+  tools.privilegedUID = getuid()
+  tools.chown = { _, _, _ in 0 }
+  try ManagedBackendProvisioner(tools: tools, log: { _ in }).restrict(root + "/tree")
+  #expect(mode(root + "/tree/sub") == 0o755 && mode(root + "/tree/sub/model.safetensors") == 0o644)
+
+  let taken = Mutex<[String]>([])
+  tools.chown = { path, _, _ in
+    taken.withLock { $0.append(path) }
+    if path == root + "/tree" {
+      mkdir(root + "/tree/late", 0o755)
+      chmod(root + "/tree/late", 0o777)
+      _ = try? writeFile(root + "/tree/late/file", "x")
+    }
+    return 0
+  }
+  #expect(throws: HostError.self) {
+    try ManagedBackendProvisioner(tools: tools, log: { _ in }).restrict(root + "/tree")
+  }
+  #expect(!taken.withLock { $0 }.contains { !$0.hasSuffix("/tree") && !$0.hasSuffix("/sub") })
 }
 
 /// A configured interpreter is checked before root runs it: a user-owned
