@@ -1329,7 +1329,9 @@ iso inference requalify mlx-main
 
 A configured `--python` must be root-owned down to its prefixes (`/usr/bin/python3`
 qualifies; a Homebrew or user-installed Python does not), so `--install` is the
-usual choice. mlx-lm serves Chat Completions only, so the managed backend suits
+usual choice. `--install` takes an mlx-lm release iso ships a hash-locked
+requirements file for (today `0.31.3`); `provision` then downloads a pinned
+standalone CPython 3.12 and the locked wheels, each checked by hash. mlx-lm serves Chat Completions only, so the managed backend suits
 `attach` with `--api openai-chat`; Claude Code and Codex need a backend that
 speaks their protocol.
 

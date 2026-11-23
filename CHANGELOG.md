@@ -93,6 +93,16 @@ SPDX-License-Identifier: Apache-2.0
   removes any earlier token before `install` and a model fetch run
   downloaded code as the role account with network access, and writes the
   new one after them.
+- **`managed.install` pins what it downloads:** it accepts only an mlx-lm
+  release iso ships a hash-locked requirements file for, today `"0.31.3"`
+  (with mlx 0.32.3). `provision` downloads one pinned python-build-standalone
+  CPython 3.12 build as the role account. Root refuses that download unless
+  its size and SHA-256 match the ones iso ships, before anything unpacks it.
+  The role account builds the venv on that Python and runs pip with
+  `--require-hashes --no-deps --only-binary :all:` on the lock. Earlier,
+  `install` built the venv from `/usr/bin/python3` (CPython 3.9), for which
+  mlx publishes no wheels, so it could not succeed.
+  `scripts/lock-mlx-lm.py` regenerates the lock with uv.
 - **Release archives** carry `iso-inference`.
 
 ### Changed

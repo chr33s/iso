@@ -184,6 +184,14 @@ private func document(
   let managed =
     #""managed": {"server": "mlx-lm", "python": "/opt/py/bin/python3", "model": "/models/m"}"#
   #expect(fieldError(withBackend(managed)) == nil)
+  // `install` takes exactly a release iso ships a hash-locked install for.
+  #expect(
+    fieldError(withBackend(#""managed": {"server": "mlx-lm", "install": "0.31.3", "model": "/m"}"#))
+      == nil)
+  #expect(
+    fieldError(
+      withBackend(#""managed": {"server": "mlx-lm", "install": "0.31.4", "model": "/m"}"#))?
+      .field == "inference.backends.mlx-main.managed.install")
   #expect(
     fieldError(withBackend(managed + #", "credential": "cmd:x""#))?.field
       == "inference.backends.mlx-main.credential")

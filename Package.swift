@@ -51,6 +51,7 @@ let package = Package(
         "Inference/Resources/seatbelt-inference.sb",
         "Inference/Resources/seatbelt-inference-backend.sb",
         "Inference/Resources/inference-launcher.py",
+        "Inference/Resources/mlx-lm-0.31.3.lock",
       ]),
     // The iso.host/v1 execution-host layer (wire, supervisor, service, client
     // bindings) over IsoHost; nothing in IsoHost may depend on it.

@@ -231,10 +231,10 @@ extension ConfigDecoder {
     }
     let install = try r.optional("install") { v, p throws(FieldError) in
       let version = try Parse.string(v, p)
-      guard ManagedBackendConfig.isQualifiedVersion(version) else {
+      guard ManagedBackendConfig.lockedMLXLM.contains(version) else {
         throw FieldError(
           p,
-          "must be an mlx-lm \(ManagedBackendConfig.qualifiedMLXLM)x version the launcher is qualified for"
+          "must be an mlx-lm version iso ships a hash-locked install for: \(ManagedBackendConfig.lockedMLXLM.joined(separator: ", "))"
         )
       }
       return version

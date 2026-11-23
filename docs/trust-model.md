@@ -52,6 +52,7 @@ user launched it.
 | isolate process (host) | Trusted | Holds/relays secrets, constructs guest commands, drives `iso-sandbox`, `container build`, `ssh`, and `iso-proxy`. Every subprocess goes through `ProcessRunner` with an argv, never a shell string. |
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint. Reached over the network; authenticated where applicable. |
+| Managed backend `install` downloads | External, pinned by hash | Only during `iso inference provision` of a backend with `managed.install`, as the `_isoinference` role account, never as root. One python-build-standalone release asset from `github.com/astral-sh/python-build-standalone` (redirected to `release-assets.githubusercontent.com`), which root checks against the size and SHA-256 in `PythonArchive.standalone` before anything unpacks it. Then the wheels named in iso's hash-locked requirements file, from `pypi.org` and `files.pythonhosted.org`; pip refuses any file whose hash is not in the lock. Unauthenticated, HTTPS only. A model `fetch` reaches Hugging Face at a pinned commit. |
 | iso-ci companion → GitHub Actions service | External | Scale-set pools only (`iso-ci/`, separately installed): the host-side controller exchanges a runner registration token for an Actions service admin token and holds a message-session token. Both stay in controller memory and go only to `https` hosts under `.actions.githubusercontent.com` (no redirects); guests receive only the JIT runner configuration. Each job is gated on GitHub's run record before acquisition (elastic scale sets) or on assignment (non-elastic, where a refused or unvetted assigned job stops all new runners). Only an elastic scale set with `min_runners: 0` may opt into public repositories (fork pull requests refused, write-gated events or named actors only). |
 | `iso-inference` gateway (host) | Trusted, confined | One per host user, under its own Seatbelt profile. It holds no cloud key, SSH key or runtime credential, only an optional local-backend credential. It parses untrusted guest HTTP (see [Guarded local inference](#guarded-local-inference)). |
 | Attached local model server | Trusted computing base, **not** confined by iso | A process the user started on host loopback, used only when its backend sets `"isolation": "unverified"`. The gateway narrows what reaches it, but its own file, network and prompt-logging behavior is outside iso's control and reported as unverified. |
@@ -1116,12 +1117,19 @@ The gateway enforces an API boundary. It does not isolate the host.
   root-owned log directory and file (launchd opens it as root), and a
   LaunchDaemon that runs the server as the role account under
   `seatbelt-inference-backend.sb` (no outbound network, writes only to its
-  cache). Every download (`install`'s pip, binary wheels only, and a model
-  `fetch`) runs as the role account in a staging directory; root takes the
-  tree over (`lchown` first, then modes set without following links) before
-  anything runs from it. No token exists while those downloads run: root
-  removes any earlier token first and writes the new one after them, so
-  downloaded code running as the role account cannot read one. A configured
+  cache). Every download runs as the role account in a staging directory.
+  These are `install`'s standalone CPython and its locked wheels, and a
+  model `fetch`. Root takes each tree over (`lchown` first, then modes set
+  without following links) before anything runs from it. `install` pins
+  what it downloads. Root reads the CPython archive once, as a regular file
+  with one link, and refuses it unless its size and SHA-256 match the ones
+  iso ships. The role account then unpacks root's checked copy. pip runs
+  with `--require-hashes --no-deps --only-binary :all:` on the lock iso
+  ships for the release, so it installs exactly the locked wheels. Root
+  never runs the venv the role account built. No token exists while those
+  downloads run: root removes any earlier token first and writes the new one
+  after them, so downloaded code running as the role account cannot read
+  one. A configured
   `python` is checked to be root-owned before root runs it. The launcher
   answers an unauthenticated `GET /iso/challenge/<nonce>` with the HMAC of
   the nonce under the token, so iso can tell its job from a squatter on the
@@ -1164,11 +1172,13 @@ The gateway enforces an API boundary. It does not isolate the host.
   not timing.
 - A managed backend is still in the trusted computing base for the prompts it
   receives. Its profile allows the Metal and IOKit services MLX needs.
-- `install` pins `mlx-lm` but not its dependencies, and no hashes: it trusts
-  the binary wheels PyPI serves at provisioning time. They are fetched and
+- `install` trusts the artifacts iso pinned when the lock was made: the
+  python-build-standalone build's SHA-256 and each wheel's hash, as
+  published on GitHub and PyPI. A hash pins bytes, not their provenance; iso
+  checks no signature or attestation for them. They are fetched and
   unpacked as the role account, never as root, and become root-owned before
-  they run, and no backend token exists while that code can run. A
-  configured, already root-owned `python` avoids the download.
+  they run, and no backend token exists while they are fetched. A
+  configured, already root-owned `python` avoids the downloads.
 - Another account on the Mac can reach loopback listeners. iso can list only
   your own listeners, so `doctor` notes but cannot enumerate other accounts'.
 - `egress` is unchanged by inference: on vmnet a guest can still reach other

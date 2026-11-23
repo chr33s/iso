@@ -35,6 +35,10 @@ package struct ManagedBackendLayout: Sendable, Equatable {
   package var launcher: String { directory + "/launcher.py" }
   package var profile: String { directory + "/profile.sb" }
   package var venv: String { directory + "/venv" }
+  /// `install`'s standalone CPython, the venv's base.
+  package var python: String { directory + "/python" }
+  /// `install`'s hash-locked requirements.
+  package var lock: String { directory + "/requirements.lock" }
   package var plist: String { prefix + Self.launchDaemons + "/" + label + ".plist" }
 }
 
@@ -120,7 +124,7 @@ package struct ManagedBackendPlan: Sendable, Equatable {
     let runtime: ManagedBackendConfig.Runtime
     switch (string("python"), string("install")) {
     case (let path?, nil) where path.hasPrefix("/"): runtime = .python(HostPath(absolute: path))
-    case (nil, let version?) where ManagedBackendConfig.isQualifiedVersion(version):
+    case (nil, let version?) where ManagedBackendConfig.lockedMLXLM.contains(version):
       runtime = .install(version: version)
     default: throw HostError("the provisioning plan needs exactly one valid python or install")
     }
@@ -159,6 +163,31 @@ package struct PythonRuntime: Sendable, Equatable {
   }
 }
 
+/// The CPython `install` builds its venv from: one python-build-standalone
+/// release (CPython 3.12, macOS arm64). The role account downloads it, and
+/// root checks the bytes against this size and SHA-256 before anything
+/// unpacks or runs them.
+package struct PythonArchive: Sendable, Equatable {
+  package static let standalone = PythonArchive(
+    url:
+      "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-aarch64-apple-darwin-install_only.tar.gz",
+    size: 25_371_130,
+    sha256: "e956e60bc9465d577ef8062059aa05cd3a2665b4b8678a2ed24e432368330b8f")
+
+  package var url: String
+  package var size: Int
+  package var sha256: String
+  /// The interpreter in the unpacked tree (the archive's `python/` member,
+  /// unpacked without that first component).
+  package var interpreter = "bin/python3.12"
+
+  package init(url: String, size: Int, sha256: String) {
+    self.url = url
+    self.size = size
+    self.sha256 = sha256
+  }
+}
+
 /// System tools the privileged step drives; paths are injectable for tests.
 package struct SystemTools: Sendable {
   package var dscl = "/usr/bin/dscl"
@@ -166,7 +195,10 @@ package struct SystemTools: Sendable {
   package var ditto = "/usr/bin/ditto"
   package var sudo = "/usr/bin/sudo"
   package var sandboxExec = "/usr/bin/sandbox-exec"
-  package var systemPython = "/usr/bin/python3"
+  package var curl = "/usr/bin/curl"
+  package var tar = "/usr/bin/tar"
+  /// The archive `install` downloads; tests substitute their own bytes.
+  package var pythonArchive = PythonArchive.standalone
   /// The account the root step must run as and trusts, besides root, to own
   /// the interpreter. Tests run the step as themselves against fake tools.
   package var privilegedUID: uid_t = 0
@@ -186,6 +218,9 @@ package enum ManagedBackend {
   static let launcherSource = EmbeddedInference.launcher
   /// Byte-identical to `Resources/seatbelt-inference-backend.sb`.
   static let profileSource = EmbeddedInference.backendProfile
+  /// The hash-locked requirements `install` provisions, one for each
+  /// `ManagedBackendConfig.lockedMLXLM` release (`scripts/lock-mlx-lm.py`).
+  static let locks = ["0.31.3": EmbeddedInference.mlxLMLock]
 
   static let healthDeadline: Duration = .seconds(300)
 
@@ -364,7 +399,8 @@ package struct ManagedBackendProvisioner: Sendable {
 
   /// The interpreter the job runs. A configured interpreter must be
   /// root-owned and unwritable by others, since the job runs it as the role
-  /// account; `install` builds a root-owned virtualenv instead.
+  /// account; `install` builds a root-owned virtualenv on a pinned
+  /// standalone CPython instead.
   func runtime(_ plan: ManagedBackendPlan, layout: ManagedBackendLayout, uid: uid_t, gid: gid_t)
     throws -> PythonRuntime
   {
@@ -383,32 +419,118 @@ package struct ManagedBackendProvisioner: Sendable {
       }
       return python
     case .install(let version):
-      try requireRootOwned(tools.systemPython)
-      // The download and any package code run as the role account in a
-      // staging directory it owns, binary wheels only; root then takes the
-      // tree over before anything runs it as root or as the job.
+      guard let lock = ManagedBackend.locks[version] else {
+        throw HostError("iso ships no hash-locked install for mlx-lm \(version)")
+      }
+      try installPython(layout, uid: uid, gid: gid)
+      try write(Array(lock.utf8), to: layout.lock, 0o644, 0, 0)
+      // pip runs as the role account in a staging directory it owns, binary
+      // wheels only, installing exactly the lock's files: each must match a
+      // hash in it. Root then takes the tree over before anything runs it as
+      // root or as the job.
       let staging = layout.directory + "/venv.staging"
       try? FileManager.default.removeItem(atPath: staging)
       try makeDirectory(staging, 0o700, uid, gid)
       log(
-        "Installing mlx-lm==\(version) into \(layout.venv) as \(ManagedBackendConfig.roleAccount) (network)"
+        "Installing mlx-lm==\(version) from its lock into \(layout.venv) as \(ManagedBackendConfig.roleAccount) (network)"
       )
-      try runAsRole(layout, [tools.systemPython, "-I", "-m", "venv", staging])
+      try runAsRole(
+        layout,
+        [layout.python + "/" + tools.pythonArchive.interpreter, "-I", "-m", "venv", staging])
       try runAsRole(
         layout,
         [
-          staging + "/bin/python", "-I", "-m", "pip", "install", "--disable-pip-version-check",
-          "--no-input", "--no-cache-dir", "--only-binary", ":all:", "mlx-lm==\(version)",
+          staging + "/bin/python", "-I", "-m", "pip", "install", "--isolated",
+          "--disable-pip-version-check", "--no-input", "--no-cache-dir",
+          "--index-url", "https://pypi.org/simple",
+          "--only-binary", ":all:",
+          "--no-deps",
+          "--require-hashes", "-r", layout.lock,
         ], deadline: .seconds(3600))
       try restrict(staging, allowLinks: true)
       try? FileManager.default.removeItem(atPath: layout.venv)
       guard rename(staging, layout.venv) == 0 else {
         throw HostError.posix("Failed to place", layout.venv)
       }
-      let python = try inspect(layout.venv + "/bin/python")
-      try requireRootOwned(python.basePrefix)
-      return python
+      // Root never runs the venv the role account built: the layout fixes
+      // its paths, and its interpreter must be the standalone one.
+      let launch = layout.venv + "/bin/python"
+      guard let executable = canonicalPath(launch),
+        executable == canonicalPath(layout.python + "/" + tools.pythonArchive.interpreter)
+      else {
+        throw HostError("\(launch) does not resolve to the standalone Python in \(layout.python)")
+      }
+      try requireRootOwned(layout.python)
+      return PythonRuntime(
+        launch: launch, executable: executable, prefix: layout.venv, basePrefix: layout.python)
     }
+  }
+
+  /// Places the pinned standalone CPython at `layout.python`. The role
+  /// account downloads it; root reads the file once and checks those bytes
+  /// against the pinned size and SHA-256 before anything unpacks or runs
+  /// them, and writes them to a root-owned file that the role account then
+  /// unpacks into a staging directory, which root takes over.
+  func installPython(_ layout: ManagedBackendLayout, uid: uid_t, gid: gid_t) throws {
+    let archive = tools.pythonArchive
+    let download = layout.directory + "/python.download"
+    let verified = layout.directory + "/python.tar.gz"
+    let staging = layout.directory + "/python.staging"
+    defer {
+      try? FileManager.default.removeItem(atPath: download)
+      unlink(verified)
+    }
+    try? FileManager.default.removeItem(atPath: download)
+    try? FileManager.default.removeItem(atPath: staging)
+    try makeDirectory(download, 0o700, uid, gid)
+    log("Downloading \(archive.url) as \(ManagedBackendConfig.roleAccount) (network)")
+    // `--disable` (first) skips a `.curlrc` in the role account's home.
+    try runAsRole(
+      layout,
+      [
+        tools.curl, "--disable", "--fail", "--silent", "--show-error", "--location",
+        "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2",
+        "--max-filesize", String(archive.size), "--output", download + "/python.tar.gz",
+        archive.url,
+      ], deadline: .seconds(1800))
+    let bytes = try Self.readDownload(download + "/python.tar.gz", size: archive.size)
+    let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    guard digest == archive.sha256 else {
+      throw HostError(
+        "the downloaded Python archive's SHA-256 is \(digest), not the pinned \(archive.sha256); nothing was unpacked"
+      )
+    }
+    try write(bytes, to: verified, 0o644, 0, 0)
+    try makeDirectory(staging, 0o700, uid, gid)
+    try runAsRole(
+      layout, [tools.tar, "-x", "-z", "-f", verified, "--strip-components", "1", "-C", staging])
+    try restrict(staging, allowLinks: true)
+    try? FileManager.default.removeItem(atPath: layout.python)
+    guard rename(staging, layout.python) == 0 else {
+      throw HostError.posix("Failed to place", layout.python)
+    }
+  }
+
+  /// The role account's download: a regular file with one link (not a link
+  /// to a file root can read and the role account cannot) of exactly `size`
+  /// bytes, read once.
+  static func readDownload(_ path: String, size: Int) throws -> [UInt8] {
+    let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    guard fd >= 0 else { throw HostError.posix("Failed to open the download", path) }
+    defer { close(fd) }
+    var info = stat()
+    guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_nlink == 1 else {
+      throw HostError("the download \(path) is not a regular file with one link")
+    }
+    guard info.st_size == size else {
+      throw HostError("the download \(path) is \(info.st_size) bytes, not the pinned \(size)")
+    }
+    let bytes = try StateStore.readBounded(
+      fd, path: path, limit: size, tooLarge: "the download \(path) grew past \(size) bytes")
+    guard bytes.count == size else {
+      throw HostError("the download \(path) is \(bytes.count) bytes, not the pinned \(size)")
+    }
+    return bytes
   }
 
   /// `argv` as the role account, with a scrubbed environment and its cache
@@ -508,8 +630,10 @@ package struct ManagedBackendProvisioner: Sendable {
     }
   }
 
-  /// Root-owned, world-readable, nothing writable by others; no symlinks
-  /// in model weights (a venv's interpreter links are allowed). The tree
+  /// Root-owned, world-readable, nothing writable by others, no set-id
+  /// bits (directories and files with an execute bit `0755`, other files
+  /// `0644`); no symlinks in model weights (a Python tree's links are
+  /// allowed). The tree
   /// was written by the role account, which may still have a process
   /// running, so nothing here follows a link: ownership is taken first
   /// (`lchown`), which ends the role's ability to change the tree; a second
@@ -530,9 +654,9 @@ package struct ManagedBackendProvisioner: Sendable {
         }
         continue
       }
-      let directory = (info.st_mode & S_IFMT) == S_IFDIR
+      let executable = (info.st_mode & S_IFMT) == S_IFDIR || info.st_mode & 0o111 != 0
       guard info.st_uid == 0 || info.st_uid == tools.privilegedUID || tools.chown(entry, 0, 0) == 0,
-        tools.chmod(entry, directory ? 0o755 : 0o644) == 0
+        tools.chmod(entry, executable ? 0o755 : 0o644) == 0
       else { throw HostError.posix("Failed to restrict", entry) }
     }
   }

@@ -26,6 +26,8 @@ INFERENCE_RESOURCES = [
      "The managed mlx-lm backend's launcher, installed by `iso inference provision`."),
     ("backendProfile", "seatbelt-inference-backend.sb",
      "The managed backend's Seatbelt profile, installed by `iso inference provision`."),
+    ("mlxLMLock", "mlx-lm-0.31.3.lock",
+     "The hash-locked requirements `install` provisions for mlx-lm 0.31.3 (`scripts/lock-mlx-lm.py`)."),
 ]
 
 

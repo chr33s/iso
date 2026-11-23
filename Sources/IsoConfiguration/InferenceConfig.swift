@@ -182,13 +182,15 @@ package struct InferenceBackendConfig: Sendable, Equatable {
 package struct ManagedBackendConfig: Sendable, Equatable {
   package static let roleAccount = "_isoinference"
   package static let keychainService = "iso-inference-backend"
-  /// The `mlx-lm` release lines the launcher is qualified for.
-  package static let qualifiedMLXLM = "0.31."
+  /// The `mlx-lm` releases `install` accepts: iso ships a hash-locked
+  /// requirements file for each (`ManagedBackend.locks` in `IsoHost`).
+  package static let lockedMLXLM = ["0.31.3"]
 
   package enum Runtime: Sendable, Equatable {
     /// An existing interpreter that imports `mlx_lm`.
     case python(HostPath)
-    /// Opt-in: install this pinned `mlx-lm` version into a root-owned venv.
+    /// Opt-in: install this `mlx-lm` release, from its shipped lock, into a
+    /// root-owned venv.
     case install(version: String)
   }
 
@@ -220,12 +222,6 @@ package struct ManagedBackendConfig: Sendable, Equatable {
   // re-validates its plan.
 
   package static let memoryLimitRange = (1 << 30)...(1 << 42)
-
-  /// A numeric version in the qualified `mlx-lm` release line.
-  package static func isQualifiedVersion(_ version: String) -> Bool {
-    version.hasPrefix(qualifiedMLXLM)
-      && version.utf8.allSatisfy { (0x30...0x39).contains($0) || $0 == UInt8(ascii: ".") }
-  }
 
   /// A Hugging Face `OWNER/NAME`: two non-empty parts of letters, digits,
   /// `-`, `_` and `.`, none starting with `.` or containing `..`.

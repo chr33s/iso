@@ -1,7 +1,9 @@
+import CryptoKit
 import Darwin
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 import Testing
 
 @testable import IsoHost
@@ -28,6 +30,7 @@ private func python() throws -> String { try requireSystemPython() }
     (EmbeddedInference.launcher, "inference-launcher.py"),
     (EmbeddedInference.backendProfile, "seatbelt-inference-backend.sb"),
     (EmbeddedInference.gatewayProfile, "seatbelt-inference.sb"),
+    (EmbeddedInference.mlxLMLock, "mlx-lm-0.31.3.lock"),
   ] {
     #expect(
       embedded == (try #require(readFile(resources.appending(path: file).path))),
@@ -41,7 +44,39 @@ private func python() throws -> String { try requireSystemPython() }
   #expect(!profile.contains(#""localhost:*""#), "the backend binds its own port only")
 }
 
+/// `install` accepts exactly the releases iso ships a lock for, and each
+/// lock pins every requirement, its own release included, with hashes.
+@Test func everyInstallableReleaseShipsAFullyHashedLock() throws {
+  #expect(Set(ManagedBackend.locks.keys) == Set(ManagedBackendConfig.lockedMLXLM))
+  for (version, lock) in ManagedBackend.locks {
+    let requirements = lock.replacingOccurrences(of: "\\\n", with: " ")
+      .split(separator: "\n").map { String($0).trimmingUnicodeWhitespace() }
+      .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    #expect(requirements.count > 1)
+    #expect(requirements.contains { $0.hasPrefix("mlx-lm==\(version) ") })
+    for requirement in requirements {
+      let fields = requirement.split(separator: " ")
+      #expect(fields.first?.contains("==") == true, "\(requirement)")
+      let hashes = fields.dropFirst()
+      #expect(!hashes.isEmpty, "\(requirement)")
+      #expect(
+        hashes.allSatisfy {
+          $0.hasPrefix("--hash=sha256:")
+            && ManagedBackendConfig.isHex(String($0.dropFirst(14)), count: 64)
+        }, "\(requirement)")
+    }
+  }
+}
+
 @Test func planRoundTripsAndRejectsTampering() throws {
+  let install = plan(
+    runtime: .install(version: "0.31.3"), model: .directory(HostPath(absolute: "/m")))
+  #expect(try ManagedBackendPlan.decode(install.encoded) == install)
+  for version in ["0.31.4", "0.31.3 ", "0.31"] {
+    let tampered = String(decoding: install.encoded, as: UTF8.self)
+      .replacingOccurrences(of: "\"0.31.3\"", with: "\"\(version)\"")
+    #expect(throws: (any Error).self) { try ManagedBackendPlan.decode(Array(tampered.utf8)) }
+  }
   let original = plan(
     runtime: .python(HostPath(absolute: "/opt/py/bin/python3")),
     model: .fetch(
@@ -567,42 +602,202 @@ private func managedBackend(_ confinement: String = "seatbelt", isolation: Strin
   #expect(!FileManager.default.fileExists(atPath: root + "/ran"))
 }
 
-/// H1: `install` downloads as the role account, binary wheels only, never
-/// as root, and root then owns the tree.
-@Test func installRunsPipAsTheRoleAccount() throws {
-  let root = try scratchDirectory("install")
-  defer { try? FileManager.default.removeItem(atPath: root) }
-  let log = root + "/sudo.log"
-  // A stand-in sudo: logs its argv, then makes the venv the real one would.
+/// The final owner each path was given.
+private final class OwnerLog: Sendable {
+  let owners = Mutex<[String: [UInt32]]>([:])
+  func owner(_ path: String) -> [UInt32]? { owners.withLock { $0[path] } }
+}
+
+/// `install` against fake tools: a stand-in `sudo` logs each role-account
+/// run (and whether a token exists during it), then does what the real tool
+/// would. `curl` writes `download` to its `--output`; `tar` unpacks a
+/// minimal Python tree into its `-C` directory; `venv` links the venv's
+/// interpreter to that tree's. The pinned archive is `verified-archive`.
+private func installSystem(download: String) throws -> (
+  FakeSystem, SystemTools, OwnerLog, ManagedBackendPlan
+) {
+  let port = try TCPListener(address: "127.0.0.1")
+  let chosen = port.port
+  port.close()
+  let system = try FakeSystem(port: chosen)
+  let layout = ManagedBackendLayout(name: mlxMain, prefix: system.prefix)
+  try writeFile(system.root + "/download", download)
+  try writeFile(system.root + "/weights/config.json", "{}")
   try writeFile(
-    root + "/sudo",
+    system.root + "/sudo",
     """
     #!/bin/sh
-    echo "$*" >> "\(log)"
-    for last; do :; done
+    if [ -e "\(layout.token)" ]; then echo "token present during a role run" >> "\(system.log)"; fi
+    echo "sudo $*" >> "\(system.log)"
+    previous=""
+    for argument; do
+      case "$previous" in
+        --output) output="$argument" ;;
+        -C) unpack="$argument" ;;
+      esac
+      previous="$argument"
+    done
     case "$*" in
-      *" -m venv "*) mkdir -p "$last/bin" && ln -sf "\(try requireSystemPython())" "$last/bin/python" ;;
+      *" /usr/bin/curl "*) cp "\(system.root)/download" "$output" ;;
+      *" /usr/bin/tar "*)
+        mkdir -p "$unpack/bin" "$unpack/lib/python3.12"
+        printf '#!/bin/sh\\n' > "$unpack/bin/python3.12"
+        chmod 700 "$unpack/bin/python3.12"
+        ln -s python3.12 "$unpack/bin/python3"
+        echo stdlib > "$unpack/lib/python3.12/os.py" ;;
+      *" -m venv "*)
+        mkdir -p "$previous/bin"
+        ln -s "\(layout.python)/bin/python3.12" "$previous/bin/python" ;;
     esac
     exit 0
     """, mode: 0o755)
-  var tools = SystemTools()
-  tools.sudo = root + "/sudo"
-  tools.privilegedUID = getuid()
-  tools.chown = { _, _, _ in 0 }
-  let provisioner = ManagedBackendProvisioner(tools: tools, log: { _ in })
-  let layout = ManagedBackendLayout(name: mlxMain, prefix: root)
-  try FileManager.default.createDirectory(
-    atPath: layout.directory, withIntermediateDirectories: true)
-  _ = try? provisioner.runtime(
-    plan(runtime: .install(version: "0.31.3"), model: .directory(HostPath(absolute: "/m"))),
-    layout: layout, uid: getuid(), gid: getgid())
-  let calls = readFile(log) ?? ""
-  #expect(calls.contains("-u _isoinference -- /usr/bin/env -i"))
-  #expect(calls.contains("-m pip install"))
-  #expect(calls.contains("--only-binary :all:"))
+  let log = OwnerLog()
+  var tools = system.tools
+  tools.sudo = system.root + "/sudo"
+  tools.chown = { path, uid, gid in
+    log.owners.withLock { $0[path] = [uid, gid] }
+    return 0
+  }
+  let pinned = "verified-archive"
+  tools.pythonArchive = PythonArchive(
+    url: "https://example.invalid/python.tar.gz", size: pinned.utf8.count,
+    sha256: SHA256.hash(data: Data(pinned.utf8)).map { String(format: "%02x", $0) }.joined())
+  let request = plan(
+    port: chosen, runtime: .install(version: "0.31.3"),
+    model: .directory(HostPath(absolute: system.root + "/weights")))
+  return (system, tools, log, request)
+}
+
+/// How the stand-in `sudo` logs a run as the role account.
+private func roleRun(_ layout: ManagedBackendLayout) -> String {
+  "sudo -u _isoinference -- /usr/bin/env -i HOME=\(layout.cache) PATH=/usr/bin:/bin HF_HOME=\(layout.cache)/huggingface PIP_NO_CACHE_DIR=1 "
+}
+
+/// H1: `install` downloads the pinned standalone Python and the locked
+/// wheels as the role account, never as root; root checks the archive,
+/// owns the Python tree and the lock, and builds the venv on that Python.
+@Test func installRunsPipAsTheRoleAccount() throws {
+  let (system, tools, owners, request) = try installSystem(download: "verified-archive")
+  defer { system.stop() }
+  let layout = ManagedBackendLayout(name: mlxMain, prefix: system.prefix)
+  try ManagedBackendProvisioner(tools: tools, prefix: system.prefix, log: { _ in })
+    .provision(request)
+  let calls = readFile(system.log) ?? ""
+  let lines = calls.split(separator: "\n").map(String.init)
+  let role = roleRun(layout)
+  let download = layout.directory + "/python.download/python.tar.gz"
   #expect(
-    calls.components(separatedBy: "\n").filter { $0.contains("pip install") }
-      .allSatisfy { $0.contains("-u _isoinference") })
+    lines.contains(
+      role
+        + "/usr/bin/curl --disable --fail --silent --show-error --location --proto =https --proto-redir =https --tlsv1.2 --max-filesize 16 --output \(download) https://example.invalid/python.tar.gz"
+    ))
+  // tar reads root's verified copy, never the role account's download.
+  #expect(
+    lines.contains(
+      role
+        + "/usr/bin/tar -x -z -f \(layout.directory)/python.tar.gz --strip-components 1 -C \(layout.directory)/python.staging"
+    ))
+  #expect(
+    lines.contains(
+      role + "\(layout.python)/bin/python3.12 -I -m venv \(layout.directory)/venv.staging"))
+  let pip = try #require(lines.first { $0.contains(" -m pip install ") })
+  #expect(pip.hasPrefix(role + "\(layout.directory)/venv.staging/bin/python -I -m pip install "))
+  for flag in [
+    "--require-hashes", "--no-deps", "--only-binary :all:", "--isolated",
+    "--index-url https://pypi.org/simple", "-r \(layout.lock)",
+  ] {
+    #expect(pip.contains(" \(flag)"), "pip runs with \(flag)")
+  }
+  #expect(pip.hasSuffix(" -r \(layout.lock)"), "pip installs only what the lock names")
+  #expect(!calls.contains("/usr/bin/python3"), "the system Python is not used")
+  #expect(!calls.contains("token present"))
+  #expect(readFile(layout.token) == token)
+
+  // The lock and the Python tree are root's; the tree keeps its executable.
+  #expect(readFile(layout.lock) == EmbeddedInference.mlxLMLock && mode(layout.lock) == 0o644)
+  #expect(owners.owner(layout.lock) == [0, 0])
+  let staged = layout.directory + "/python.staging"
+  let tree = try ManagedBackendProvisioner.entries(under: layout.python)
+  #expect(tree.count == 7)
+  for (path, info) in tree {
+    let relative = String(path.dropFirst(layout.python.count))
+    #expect(owners.owner(staged + relative) == [0, 0], "\(relative) taken over")
+    let expected: mode_t? =
+      switch info.st_mode & S_IFMT {
+      case S_IFLNK: nil
+      case S_IFDIR: 0o755
+      default: relative == "/bin/python3.12" ? 0o755 : 0o644
+      }
+    if let expected { #expect(mode(path) == expected, "\(relative)") }
+  }
+  #expect(!FileManager.default.fileExists(atPath: layout.directory + "/python.download"))
+  #expect(!FileManager.default.fileExists(atPath: layout.directory + "/python.tar.gz"))
+
+  // The job runs the venv on the standalone Python, confined to both.
+  #expect(canonicalPath(layout.venv + "/bin/python") == layout.python + "/bin/python3.12")
+  let document = try #require(
+    try PropertyListSerialization.propertyList(
+      from: Data(contentsOf: URL(fileURLWithPath: layout.plist)), format: nil) as? [String: Any])
+  let arguments = try #require(document["ProgramArguments"] as? [String])
+  #expect(arguments.contains("PYTHON=\(layout.venv)/bin/python"))
+  #expect(arguments.contains("PYTHON_EXECUTABLE=\(layout.python)/bin/python3.12"))
+  #expect(arguments.contains("PYTHON_PREFIX=\(layout.venv)"))
+  #expect(arguments.contains("PYTHON_BASE_PREFIX=\(layout.python)"))
+}
+
+/// An archive that does not match the pinned SHA-256 is refused before
+/// anything unpacks or runs it: no tar, no venv, no pip, no token, no job.
+@Test func installChecksThePythonArchiveBeforeUnpackingIt() throws {
+  // The pinned size, so the hash check is what refuses it.
+  let (system, tools, _, request) = try installSystem(download: "tampered-archive")
+  defer { system.stop() }
+  let layout = ManagedBackendLayout(name: mlxMain, prefix: system.prefix)
+  // A token left by an earlier provisioning is gone, and no new one is written.
+  try writeFile(layout.token, "old")
+  let error = try #require(throws: HostError.self) {
+    try ManagedBackendProvisioner(tools: tools, prefix: system.prefix, log: { _ in })
+      .provision(request)
+  }
+  #expect(error.message.contains("SHA-256"))
+  let calls = readFile(system.log) ?? ""
+  #expect(calls.contains(" /usr/bin/curl "))
+  for step in [" /usr/bin/tar ", " -m venv ", " -m pip ", "launchctl bootstrap"] {
+    #expect(!calls.contains(step), "\(step) never ran")
+  }
+  for path in [
+    layout.token, layout.python, layout.venv, layout.directory + "/python.tar.gz",
+    layout.directory + "/python.download",
+  ] {
+    #expect(!FileManager.default.fileExists(atPath: path), "\(path)")
+  }
+}
+
+/// Root reads the role account's download only as one regular file of the
+/// pinned size: not through a link, and not a second name for another file.
+@Test func theDownloadMustBeOneRegularFileOfThePinnedSize() throws {
+  let root = try scratchDirectory("download")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let archive = root + "/python.tar.gz"
+  try writeFile(archive, "verified-archive")
+  #expect(
+    try ManagedBackendProvisioner.readDownload(archive, size: 16) == Array("verified-archive".utf8))
+  for size in [15, 17] {
+    #expect(throws: HostError.self) {
+      try ManagedBackendProvisioner.readDownload(archive, size: size)
+    }
+  }
+  symlink(archive, root + "/symbolic")
+  #expect(throws: HostError.self) {
+    try ManagedBackendProvisioner.readDownload(root + "/symbolic", size: 16)
+  }
+  mkfifo(root + "/fifo", 0o600)
+  #expect(throws: HostError.self) {
+    try ManagedBackendProvisioner.readDownload(root + "/fifo", size: 16)
+  }
+  link(archive, root + "/hard")
+  #expect(throws: HostError.self) {
+    try ManagedBackendProvisioner.readDownload(root + "/hard", size: 16)
+  }
 }
 
 /// The provisioner's chmod never follows a final link.
