@@ -2085,6 +2085,7 @@ if want inference; then
                               frontend_apis: ["anthropic-messages"], max_context_tokens: 200000},
              "local-codex": {backend: "fake-responses", upstream_model: "fake/codex-upstream",
                              frontend_apis: ["openai-responses"], max_context_tokens: 200000}}},
+         workspace: {input: {mode: "paths", paths: [{path: ".", recursive: true}]}},
          claude: {config_dir: false, local_model: {service: "local-claude"}},
          codex: {config_dir: false, local_model: {service: "local-codex"}}}' >"$ICFG"
     if [[ ! -x "$ISO" ]]; then
@@ -2176,8 +2177,10 @@ if want inference; then
         # AT-31: with the gateway stopped a guest connection fails; the next
         # iso command restarts it and registers a fresh session (R1).
         check "inference: the gateway stops" iinf inference stop --force
+        # Through the runtime, not iso: any iso command restarts the gateway.
         check "inference: a guest connection fails while it is down" \
-            test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 000
+            test "$(csbx exec "$(machine_id inf)" -- curl -s -o /dev/null -w '%{http_code}' \
+                -H 'content-type: application/json' -d "$body" "$url" 2>/dev/null)" = 000
         check "inference: the next command restarts it" test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
         check "inference: and the relay serves again" \
             test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 401
@@ -2269,6 +2272,7 @@ while True:
            services: {"local-claude": {backend: "fake-anthropic",
              upstream_model: "fake/claude-upstream", frontend_apis: ["anthropic-messages"],
              max_context_tokens: 200000}}},
+         workspace: {input: {mode: "paths", paths: [{path: ".", recursive: true}]}},
          claude: {config_dir: false, local_model: {service: "local-claude"}},
          codex: {config_dir: false}}' >"$BCFG"
     if [[ ! -x "$ISO" ]]; then
@@ -2295,7 +2299,7 @@ while True:
         machine="$(machine_id binf)"
         inspected="$(csbx inspect "$machine")"
         check "brokered-inference: the VM has no network device and no socket relay" \
-            jq -e '.effective.brokered.networkDevices == 0 and .effective.socketRelays == 0 and .effective.inferenceRelay == null and (.record.inferenceRelay // false) == false' <<<"$inspected"
+            jq -e '.effective.networkDevices == 0 and .effective.socketRelays == 0 and .effective.inferenceRelay == null and (.record.inferenceRelay // false) == false' <<<"$inspected"
         check "brokered-inference: the effective policy names the inference grant" \
             grep -q "local_services: inference-gateway" <<<"$(binf policy effective binf 2>/dev/null)"
         check "brokered-inference: status names the inference-gateway local service" \
