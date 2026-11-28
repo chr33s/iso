@@ -1,6 +1,6 @@
 # Build environment for iso's desktop kernel (scripts/build-desktop-kernel.sh):
 # a native arm64 toolchain on the same pinned base image iso's guest images use.
-FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+FROM docker.io/library/ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
 # The toolchain comes from one dated snapshot of the Ubuntu archive, so a
 # later gcc or binutils update does not change the kernel's hash
 # (KernelPin.desktopAllowed). To move it, change the timestamp, rebuild and
