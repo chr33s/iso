@@ -27,12 +27,14 @@ with tempfile.TemporaryDirectory(prefix="iso-forward-ca-") as temporary:
         "extendedKeyUsage=serverAuth\n"
         "subjectKeyIdentifier=hash\n"
         "authorityKeyIdentifier=keyid\n"
-        "subjectAltName=DNS:api.anthropic.com,DNS:api.openai.com\n")
+        "subjectAltName=DNS:api.anthropic.com,DNS:api.openai.com,"
+        "DNS:generativelanguage.googleapis.com\n")
     openssl("x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
             "-CAcreateserial", "-days", "1", "-extfile", "extensions", "-out", "leaf.pem")
     extensions = (work / "extensions").read_text()
     (work / "wrong.ext").write_text(extensions.replace(
-        "DNS:api.anthropic.com,DNS:api.openai.com", "DNS:wrong.invalid"))
+        "DNS:api.anthropic.com,DNS:api.openai.com,DNS:generativelanguage.googleapis.com",
+        "DNS:wrong.invalid"))
     openssl("x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
             "-CAcreateserial", "-days", "1", "-extfile", "wrong.ext", "-out", "wrong.pem")
     openssl("x509", "-req", "-in", "leaf.csr", "-signkey", "leaf.key", "-days", "1",

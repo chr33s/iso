@@ -12,10 +12,14 @@ import IsoCore
 package enum ProxyProvisioning {
   package static let securityTool = "/usr/bin/security"
 
-  /// OpenAI keys are always Bearer; Anthropic uses `x-api-key` for an API
-  /// key and Bearer for a `setup-token`.
+  /// OpenAI keys are always Bearer and Gemini keys always `x-goog-api-key`;
+  /// Anthropic uses `x-api-key` for an API key and Bearer for a `setup-token`.
   package static func auth(for provider: ProxyProvider, apiKey: Bool) -> ProxyAuthScheme {
-    provider == .anthropic && apiKey ? .apiKey : .bearer
+    switch provider {
+    case .anthropic: apiKey ? .apiKey : .bearer
+    case .openai: .bearer
+    case .google: .googAPIKey
+    }
   }
 
   /// A per-VM override appends `-<vm>` so it never collides with the

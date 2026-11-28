@@ -19,6 +19,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # (id, file, original text, replacement, swift test filter)
 FAULTS = [
+    # A Gemini key is a provider credential: proxied or required, it never
+    # reaches the guest; the guest gets the proxy capability instead.
+    ("gemini-key-withheld", "Sources/IsoConfiguration/IsoConfig.swift",
+     '    case .google: [("GEMINI_API_KEY", .googAPIKey)]', '    case .google: []',
+     "geminiKeyIsWithheldWhenProxiedAndReplacedByTheCapability"),
+    ("raw-forward-skips-proxied", "Sources/IsoHost/Guest/Bootstrap.swift",
+     "    ProxyProvider.allCases.filter { !proxied.contains($0) }.flatMap(\\.recognizedVariables)",
+     "    ProxyProvider.allCases.filter { _ in true }.flatMap(\\.recognizedVariables)",
+     "geminiCapabilityIsNotAuditedAsARawForward"),
+    ("antigravity-mcp-removes-unconfigured", "Sources/IsoHost/Guest/BootstrapAntigravity.swift",
+     "    for name in removing.sorted() { entries.remove(name) }",
+     "    for name in removing.sorted() where name.isEmpty { entries.remove(name) }",
+     "antigravityBootstrapRemovesServersItNoLongerConfigures"),
+    ("antigravity-pat-override-checked", "Sources/IsoHost/Credentials/GitHubTokens.swift",
+     "    try rejectOverrides(config.agents.flatMap(\\.config.envForward).map(\\.rawValue))",
+     "    try rejectOverrides(config.agents.prefix(2).flatMap(\\.config.envForward).map(\\.rawValue))",
+     "assignmentsRejectEveryManagedOverrideSource"),
+    ("antigravity-mcp-headers-on-stdin", "Sources/IsoHost/Guest/BootstrapAntigravity.swift",
+     '        ), stdin: Array(content.utf8))',
+     '        ).literal(" # " + content), stdin: Array(content.utf8))',
+     "antigravityBootstrapWritesSettingsAndMCPConfigThroughStdin"),
     # iso-ci scale sets, shared-host scheduling and allocation supervisors.
     ("macos-helper-nesting", "iso-sandbox/Sources/IsoMacProtocol/HelperProtocol.swift",
      "    guard !JSONNesting.exceeds(line, limit: HelperProtocol.maxNesting) else {",

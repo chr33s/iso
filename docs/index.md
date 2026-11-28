@@ -70,7 +70,8 @@ Apple backend. The credential proxy is the Swift package
   [`shell-completion.md`](shell-completion.md).
 - [`remote-hosts.md`](remote-hosts.md) — project VMs on trusted remote Macs.
 - [`claude-integration.md`](claude-integration.md),
-  [`codex-integration.md`](codex-integration.md) — agent integration.
+  [`codex-integration.md`](codex-integration.md),
+  [`antigravity-integration.md`](antigravity-integration.md) — agent integration.
 - [`credential-proxy.md`](credential-proxy.md) — the `proxy`
   credential-injecting proxy (required by default) (issue #411): keeps the raw API key out of the
   guest.

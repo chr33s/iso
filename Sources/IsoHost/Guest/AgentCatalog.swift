@@ -44,6 +44,13 @@ package enum AgentCatalog {
         argv: ["codex"], workingDirectory: GuestPath("/workspace"), terminal: .auto,
         environment: []),
       authAdapter: .codex, networkHints: []),
+    AgentDefinition(
+      id: AgentDefinitionID(unchecked: "antigravity"), displayName: "Antigravity",
+      environment: nil,
+      launch: AgentLaunchSpec(
+        argv: ["agy"], workingDirectory: GuestPath("/workspace"), terminal: .auto,
+        environment: []),
+      authAdapter: .antigravity, networkHints: []),
   ]
 
   package static func definitionHash(_ definition: AgentDefinition) -> String {
@@ -64,7 +71,8 @@ package enum AgentCatalog {
     let path = directory(config) + "/\(id.rawValue).json"
     guard let bytes = try readIfPresent(path) else {
       throw HostError(
-        "No agent definition '\(id)'. Install one with `iso agent add`, or use claude or codex.")
+        "No agent definition '\(id)'. Install one with `iso agent add`, or use claude, codex or antigravity."
+      )
     }
     let definition = try decodeInstalled(bytes, path: path, id: id)
     return (definition, .installed, definitionHash(definition))
@@ -208,7 +216,7 @@ package enum AgentCatalog {
 
 extension AgentDefinitionID {
   fileprivate init(unchecked raw: String) {
-    // The literals "claude" and "codex" satisfy the validating initializer.
+    // The literals "claude", "codex" and "antigravity" satisfy the validating initializer.
     self = try! AgentDefinitionID(raw)
   }
 }

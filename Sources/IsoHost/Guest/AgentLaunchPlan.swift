@@ -32,6 +32,10 @@ package struct AgentAdapterContract: Sendable, Equatable {
     id: .codex, contractVersion: contractVersion, logicalExecutables: ["codex"],
     supportsAsk: true, terminalModes: Set(AgentTerminalMode.allCases),
     managedFlags: ["--dangerously-bypass-approvals-and-sandbox"], providerName: "openai")
+  package static let antigravity = AgentAdapterContract(
+    id: .antigravity, contractVersion: contractVersion, logicalExecutables: ["agy"],
+    supportsAsk: true, terminalModes: Set(AgentTerminalMode.allCases),
+    managedFlags: [AntigravityChecks.bypassFlag], providerName: "google")
 }
 
 package enum AgentAdapterRegistry {
@@ -40,6 +44,7 @@ package enum AgentAdapterRegistry {
     case AgentAdapterID.none.rawValue: AgentAdapterContract.none
     case AgentAdapterID.claude.rawValue: AgentAdapterContract.claude
     case AgentAdapterID.codex.rawValue: AgentAdapterContract.codex
+    case AgentAdapterID.antigravity.rawValue: AgentAdapterContract.antigravity
     default: nil
     }
   }
@@ -226,6 +231,9 @@ package enum AgentDispatch {
       }
       binary = (codexAccount ? GuestBinaries.codexAccount : GuestBinaries.codex).rawValue
       tail = CodexChecks.launchArguments(ask: plan.ask, forwarded)
+    case AgentAdapterID.antigravity.rawValue:
+      binary = GuestBinaries.agy.rawValue
+      tail = AntigravityChecks.launchArguments(ask: plan.ask, defaults + passthrough)
     case AgentAdapterID.none.rawValue:
       binary = plan.argv[0]
       tail = defaults + passthrough

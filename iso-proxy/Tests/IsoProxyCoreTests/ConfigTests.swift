@@ -22,7 +22,9 @@ private func parse(_ value: [String: Any]) throws -> ProxyConfig {
   #expect(config.injection.credential.expose() == "real-secret")
   #expect(!String(reflecting: config).contains("real-secret"))
   #expect(!String(reflecting: config).contains(String(repeating: "a", count: 64)))
-  for (provider, scheme) in [("anthropic", "bearer"), ("openai", "bearer")] {
+  for (provider, scheme) in [
+    ("anthropic", "bearer"), ("openai", "bearer"), ("google", "x_goog_api_key"),
+  ] {
     var value = fixture()
     value["provider"] = provider
     value["injection"] = ["scheme": scheme, "credential": "real-secret"]
@@ -30,7 +32,8 @@ private func parse(_ value: [String: Any]) throws -> ProxyConfig {
   }
   for (field, invalid) in [
     ("version", 0 as Any), ("version", 2), ("provider", "evil"),
-    ("provider", "openai"), ("upstream_host", "api.anthropic.com"), ("extra", true),
+    ("provider", "openai"), ("provider", "google"), ("upstream_host", "api.anthropic.com"),
+    ("extra", true),
     ("capability_token", ""), ("capability_token", String(repeating: "A", count: 64)),
   ] {
     var value = fixture()
@@ -40,6 +43,16 @@ private func parse(_ value: [String: Any]) throws -> ProxyConfig {
   for field in fixture().keys {
     var value = fixture()
     value.removeValue(forKey: field)
+    #expect(throws: PolicyError.self) { try parse(value) }
+  }
+  // Each provider takes only the scheme its clients send.
+  for (provider, scheme) in [
+    ("anthropic", "x_goog_api_key"), ("openai", "x_goog_api_key"), ("openai", "x_api_key"),
+    ("google", "bearer"), ("google", "x_api_key"),
+  ] {
+    var value = fixture()
+    value["provider"] = provider
+    value["injection"] = ["scheme": scheme, "credential": "real-secret"]
     #expect(throws: PolicyError.self) { try parse(value) }
   }
   for injection in [

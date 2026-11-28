@@ -402,7 +402,7 @@ public enum PolicyCompiler {
     let named = Set(rate.flatMap { $0.instances ?? [] })
     // `nil` stands for any instance no guard names.
     let scopes: [String?] = [nil] + named.sorted()
-    for provider in [PolicyResource.anthropic, .openai] {
+    for provider in PolicyResource.allCases where provider.kind == .provider {
       for instance in scopes {
         let matching = rate.filter { entry in
           guard entry.resources.contains(provider) else { return false }

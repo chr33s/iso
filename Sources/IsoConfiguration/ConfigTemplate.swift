@@ -84,7 +84,16 @@ package enum ConfigTemplate {
       //   }
       // },
 
-      // Host-side credential-injecting proxy. `iso proxy setup [--openai]`
+      // Antigravity CLI (agy). Only api_key, env_forward and mcp_servers apply;
+      // MCP servers are stdio (without env) or streamable HTTP.
+      // "antigravity": {
+      //   "env_forward": ["CUSTOM_TOKEN"],
+      //   "mcp_servers": {
+      //     "docs": { "type": "http", "url": "https://mcp.example.com/mcp" }
+      //   }
+      // },
+
+      // Host-side credential-injecting proxy. `iso proxy setup [--openai|--google]`
       // stores the credential in the macOS Keychain and writes the `cmd:`
       // reference here. Credentials must be `cmd:` or `vault:NAME` (iso secrets)
       // references; literal values are rejected. Cannot be combined with codex auth "chatgpt".
@@ -99,6 +108,9 @@ package enum ConfigTemplate {
       //   "openai": {
       //     "credential": "cmd:security find-generic-password -s iso-openai -a openai -w",
       //     "auth": "bearer"
+      //   },
+      //   "google": {                 // Gemini API key for Antigravity (x-goog-api-key)
+      //     "credential": "cmd:security find-generic-password -s iso-google -a google -w"
       //   }
       // },
 

@@ -81,11 +81,11 @@
   },
   "proxy status": {
     "exit": 0,
-    "stdout": "Credential proxy \u2014 defaults (proxy in the configuration file):\n  anthropic  default \u2014 bearer, cmd:security find-generic-password -s iso-anthropic -w\n  openai     off (no default, no override)\n\nPer-VM overrides:\n  beta:\n    anthropic  override \u2014 api_key, cmd:pass show anthropic\n    openai     override \u2014 bearer, cmd:pass show openai\n\nValues are cmd: references, not secrets. Each running VM in remote model mode routes its agents through the proxy; the raw credential stays on the host.\n"
+    "stdout": "Credential proxy \u2014 defaults (proxy in the configuration file):\n  anthropic  default \u2014 bearer, cmd:security find-generic-password -s iso-anthropic -w\n  openai     off (no default, no override)\n  google     off (no default, no override)\n\nPer-VM overrides:\n  beta:\n    anthropic  override \u2014 api_key, cmd:pass show anthropic\n    openai     override \u2014 bearer, cmd:pass show openai\n    google     off (no default, no override)\n\nValues are cmd: references, not secrets. Each running VM in remote model mode routes its agents through the proxy; the raw credential stays on the host.\n"
   },
   "proxy status --vm alpha": {
     "exit": 0,
-    "stdout": "  alpha:\n    anthropic  default \u2014 bearer, cmd:security find-generic-password -s iso-anthropic -w\n    openai     off (no default, no override)\n\nValues are cmd: references, not secrets. Each running VM in remote model mode routes its agents through the proxy; the raw credential stays on the host.\n"
+    "stdout": "  alpha:\n    anthropic  default \u2014 bearer, cmd:security find-generic-password -s iso-anthropic -w\n    openai     off (no default, no override)\n    google     off (no default, no override)\n\nValues are cmd: references, not secrets. Each running VM in remote model mode routes its agents through the proxy; the raw credential stays on the host.\n"
   },
   "proxy status --vm bad/name": {
     "exit": 1,
@@ -93,7 +93,7 @@
   },
   "proxy status --vm beta": {
     "exit": 0,
-    "stdout": "  beta:\n    anthropic  override \u2014 api_key, cmd:pass show anthropic\n    openai     override \u2014 bearer, cmd:pass show openai\n\nValues are cmd: references, not secrets. Each running VM in remote model mode routes its agents through the proxy; the raw credential stays on the host.\n"
+    "stdout": "  beta:\n    anthropic  override \u2014 api_key, cmd:pass show anthropic\n    openai     override \u2014 bearer, cmd:pass show openai\n    google     off (no default, no override)\n\nValues are cmd: references, not secrets. Each running VM in remote model mode routes its agents through the proxy; the raw credential stays on the host.\n"
   },
   "proxy status --vm missing": {
     "exit": 1,

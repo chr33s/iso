@@ -62,7 +62,7 @@ private func referenceSelectorValid(
   }
   for resource in resources {
     let providerAction = action == .credentialUse || action == .proxyRequest
-    let providerResource = resource == .anthropic || resource == .openai
+    let providerResource = resource == .anthropic || resource == .openai || resource == .google
     if providerAction != providerResource { return false }
   }
   guard let instances else { return true }
@@ -103,7 +103,7 @@ private func referenceIsValid(_ doc: PolicyDocument) -> Bool {
     if case .rateLimit = $0.requirement { true } else { false }
   }
   let named = rateGuards.flatMap { $0.instances ?? [] }
-  for provider in [PolicyResource.anthropic, .openai] {
+  for provider in [PolicyResource.anthropic, .openai, .google] {
     for instance in named + ["unnamed instance"] {
       let request = PolicyRequest(action: .proxyRequest, resource: provider, instance: instance)
       let matching = rateGuards.filter {
@@ -351,7 +351,7 @@ private func randomRequest(_ rng: inout PropertyRNG) -> PolicyRequest {
 private func requestBatches(_ rng: inout PropertyRNG) -> [[PolicyRequest]] {
   var batches: [[PolicyRequest]] = []
   for _ in 0..<4 { batches.append((0..<rng.int(0...3)).map { _ in randomRequest(&rng) }) }
-  for provider in [PolicyResource.anthropic, .openai] {
+  for provider in [PolicyResource.anthropic, .openai, .google] {
     batches.append(PolicyEvaluator.providerBatch(provider, instance: rng.element(requestInstances)))
   }
   let instance = rng.element(requestInstances)
@@ -492,7 +492,7 @@ private struct AdmissionCase: CustomDebugStringConvertible {
 }
 
 private func admissionCase(_ rng: inout PropertyRNG) -> AdmissionCase {
-  let provider = rng.element([PolicyResource.anthropic, .openai])
+  let provider = rng.element([PolicyResource.anthropic, .openai, .google])
   let mode: PolicyMode = rng.oneIn(8) ? rng.element([.off, .shadow]) : .enforce
   let actions: [PolicyAction] =
     rng.oneIn(8) ? [rng.element(PolicyAction.allCases)] : [.credentialUse, .proxyRequest]
@@ -502,7 +502,7 @@ private func admissionCase(_ rng: inout PropertyRNG) -> AdmissionCase {
       rules.append(
         PolicyRule(
           id: "permit\(index)", effect: .permit, action: action,
-          resources: rng.subset([.anthropic, .openai], minCount: 1),
+          resources: rng.subset([.anthropic, .openai, .google], minCount: 1),
           instances: rng.oneIn(4) ? selectorInstances(&rng) : nil))
     }
     if rng.oneIn(10) {
@@ -516,7 +516,7 @@ private func admissionCase(_ rng: inout PropertyRNG) -> AdmissionCase {
       guards.append(
         PolicyGuard(
           id: "rate\(index)", action: .proxyRequest,
-          resources: rng.subset([.anthropic, .openai], minCount: 1),
+          resources: rng.subset([.anthropic, .openai, .google], minCount: 1),
           instances: rng.oneIn(4) ? selectorInstances(&rng) : nil,
           requirement: .rateLimit(maxRequests: rng.int(1...4), withinSeconds: rng.int(1...3))))
     }

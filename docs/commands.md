@@ -28,7 +28,7 @@ isolate creates isolated VM environments for running Claude Code and Codex. Supp
 | Success | 0 |
 | Operational failure, a requested check or probe that failed (`validate`), or a host receipt that is not `succeeded` | 1 |
 | Invalid syntax, incompatible flags, or a malformed value. Most are refused while parsing, before any configuration, network or VM work; a value that is well-formed but out of range for the host (such as a `--ttl` above 24h) is refused later with 1 | 2 |
-| A guest command run by `exec`, `shell [NAME] -- COMMAND`, an interactive `shell`/`claude`/`claude-agents`/`codex` session, `run`, `host shell`, `host agent` or `host run` that exits non-zero | That command's status |
+| A guest command run by `exec`, `shell [NAME] -- COMMAND`, an interactive `shell`/`claude`/`claude-agents`/`codex`/`antigravity` session, `run`, `host shell`, `host agent` or `host run` that exits non-zero | That command's status |
 | Such a command (or the `ssh` behind `host forward`) ended by a signal, or a session whose readiness proof was lost | 1 (never 0) |
 
 A forwarded status can itself be 1 or 2; for these commands read it as the
@@ -381,6 +381,25 @@ iso codex my-project -- --model gpt-5
 iso codex my-project -- login --device-auth
 ```
 
+### `antigravity`
+
+Launch the Antigravity CLI (`agy`) inside the VM; `iso agy` is the same. By default isolate passes `--dangerously-skip-permissions`, so `agy` approves tool calls without prompting — parity with `iso claude`. Use `--ask` to keep its permission prompts for that session. The `mcp`, `plugin`, `update`, `install` and `acp` subcommands are launched without the flag. See [antigravity-integration.md](antigravity-integration.md).
+
+```
+iso antigravity [NAME] [FLAGS] [ARGS...]
+```
+
+| Flag | Description |
+|---|---|
+| `--ask` | Keep Antigravity's permission prompts |
+| `ARGS...` | Extra arguments passed through to `agy` |
+
+```bash
+iso antigravity
+iso antigravity my-project --ask
+iso antigravity my-project -- -p "explain the build" --output-format json
+```
+
 ### `exec`
 
 Run a command in the VM and print its output. No PTY is allocated and stdin is not forwarded (`shell NAME -- COMMAND` forwards it); use `shell` for interactive work. `exec` exits with the command's status.
@@ -514,7 +533,7 @@ iso run <agent> [--workspace DIR] [--name NAME]
 
 | Flag | Description |
 |------|-------------|
-| `<agent>` | `claude`, `codex`, or an installed definition id |
+| `<agent>` | `claude`, `codex`, `antigravity`, or an installed definition id |
 | `--workspace <dir>` | Project directory (default: current directory) |
 | `--name <name>` | Instance name. Must match the recorded workspace when both are set |
 | `--image <name>` | Image for a new instance. Mutually exclusive with `--profile` |
@@ -575,14 +594,14 @@ A definition selects an image or profile and a reviewed adapter (`none`, `claude
 
 ### `agent update`
 
-Update the coding agents (Claude Code and Codex) installed inside a running VM
-to their latest versions, without rebuilding the golden image. Both agents are
+Update the coding agents (Claude Code, Codex and Antigravity) installed inside a running VM
+to their latest versions, without rebuilding the golden image. The agents are
 installed "latest at build time" during `iso setup`, so they can go stale in
 long-running VMs and in new VMs created from an old image. To refresh the image
 itself instead, rebuild it with `iso setup --rebuild`.
 
 ```
-iso agent update [NAME] [--claude] [--codex] [--check] [-y]
+iso agent update [NAME] [--claude] [--codex] [--antigravity] [--check] [-y]
 ```
 
 | Argument / Flag | Description |
@@ -590,11 +609,13 @@ iso agent update [NAME] [--claude] [--codex] [--check] [-y]
 | `NAME` | Instance name (required if multiple instances exist) |
 | `--claude` | Update Claude Code |
 | `--codex` | Update Codex |
+| `--antigravity` | Update Antigravity |
 | `--check` | Only report installed vs. latest versions — change nothing |
 | `-y`, `--yes` | Skip the confirmation prompt |
 
-With no agent flag, both agents are updated; passing both `--claude` and
-`--codex` is the same as passing neither. The VM must be running.
+With no agent flag, every agent the VM's image has is updated, and missing
+ones are reported as skipped; naming an agent always tries it. `--check`
+reports a missing agent as not installed. The VM must be running.
 
 `iso agent update --codex` re-runs OpenAI's native installer as the guest
 user, including when migrating an older direct-binary installation. The full
@@ -602,7 +623,8 @@ package stays in the user's home directory, with `/usr/local/bin/codex` linked
 to `~/.local/bin/codex`. The guest user can also run `codex update` directly
 without sudo. Claude Code already auto-updates in the background;
 `iso agent update --claude` runs `claude update` now, synchronously — a
-convenience rather than a fix.
+convenience rather than a fix. Antigravity also self-updates;
+`iso agent update --antigravity` runs `agy update` as the guest user.
 
 `--check` reports each agent's installed version and, for Codex, the latest
 release on GitHub, changing nothing:
@@ -614,8 +636,8 @@ Codex        0.4.1 → 0.5.0    update available — run: iso agent update --cod
 ```
 
 ```
-iso agent update                 # both agents, resolved instance
-iso agent update my-project      # both agents, instance "my-project"
+iso agent update                 # every agent, resolved instance
+iso agent update my-project      # every agent, instance "my-project"
 iso agent update --codex         # Codex only
 iso agent update --check         # report versions, change nothing
 ```
@@ -1265,12 +1287,13 @@ model.
 
 | Subcommand | Effect |
 |------------|--------|
-| `setup [--anthropic] [--openai] [--vm <name>] [--api-key]` | Store a provider credential in the macOS Keychain and wire its `cmd:` reference into `proxy.<provider>` (the default) or a per-VM override. There is no fallback store; if the Keychain is unavailable, setup fails. Anthropic (Claude) is the default provider; pass `--openai` for Codex. `--vm <name>` stores the credential as a per-VM override in that instance's state instead of the global default. Anthropic only: `--api-key` stores an API key (`x-api-key`) instead of a Claude `setup-token`; ignored for `--openai`, whose keys are always injected as `Authorization: Bearer`. |
+| `setup [--anthropic] [--openai] [--google] [--vm <name>] [--api-key]` | Store a provider credential in the macOS Keychain and wire its `cmd:` reference into `proxy.<provider>` (the default) or a per-VM override. There is no fallback store; if the Keychain is unavailable, setup fails. Anthropic (Claude) is the default provider; pass `--openai` for Codex or `--google` for Antigravity (a Gemini API key, always injected as `x-goog-api-key`). `--vm <name>` stores the credential as a per-VM override in that instance's state instead of the global default. Anthropic only: `--api-key` stores an API key (`x-api-key`) instead of a Claude `setup-token`; ignored for `--openai`, whose keys are always injected as `Authorization: Bearer`. |
 | `status [--vm <name>]` | Show what each VM's agents resolve to (per-VM override → default → off), with credentials redacted. Pass `--vm <name>` for the effective resolution of a single VM instead of all. |
 
 ```
 iso proxy setup
 iso proxy setup --openai
+iso proxy setup --google
 iso proxy setup --vm my-project
 iso proxy setup --api-key
 iso proxy status

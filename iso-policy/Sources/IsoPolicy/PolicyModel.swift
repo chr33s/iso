@@ -31,6 +31,7 @@ public enum PolicyEffect: String, Sendable, CaseIterable, Hashable {
 public enum PolicyResource: String, Sendable, CaseIterable, Comparable, Hashable {
   case anthropic = "provider:anthropic"
   case openai = "provider:openai"
+  case google = "provider:google"
   /// The instance's recorded attached workspace.
   case attachedWorkspace = "workspace:attached"
 
@@ -38,7 +39,7 @@ public enum PolicyResource: String, Sendable, CaseIterable, Comparable, Hashable
 
   public var kind: Kind {
     switch self {
-    case .anthropic, .openai: .provider
+    case .anthropic, .openai, .google: .provider
     case .attachedWorkspace: .workspace
     }
   }

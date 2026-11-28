@@ -19,7 +19,7 @@ import Testing
     """#)
   var agents = guest.bootstrap(config)
   var env = try agents.prepareEnvForwarding(
-    repo: nil, suppressing: [.anthropic, .openai])
+    repo: nil, suppressing: [.anthropic, .openai, .google])
   #expect(!env.contains("ANTHROPIC_API_KEY"))
   #expect(!env.contains("OPENAI_API_KEY"))
   #expect(env.contains("GUEST_VAR"))
@@ -1376,8 +1376,12 @@ extension GuestEnvState {
   try sidecar(nil)
   #expect(try guest.bootstrap(on).withGuestComputerUse(instance).config.claude.mcpServers.isEmpty)
   try sidecar(MacGuestComputerUse(frameRate: 4))
-  let clash = try testConfig(
-    #""computer_use": {"guest_access": true}, "claude": {"mcp_servers": {"iso-cu": {"command": "x"}}}"#
-  )
-  #expect(throws: HostError.self) { try guest.bootstrap(clash).withGuestComputerUse(instance) }
+  for agent in ["claude", "codex", "antigravity"] {
+    let clash = try testConfig(
+      #""computer_use": {"guest_access": true}, "\#(agent)": {"mcp_servers": {"iso-cu": {"command": "x"}}}"#
+    )
+    #expect(throws: HostError.self, "\(agent)") {
+      try guest.bootstrap(clash).withGuestComputerUse(instance)
+    }
+  }
 }

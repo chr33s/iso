@@ -60,7 +60,7 @@ public enum ObservationContracts {
 
   public static func disconnect(_ records: [Record]) throws {
     var expected: Set<String> = []
-    for provider in ["anthropic", "openai"] {
+    for provider in ["anthropic", "openai", "google"] {
       for phase in ["beforeHeaders", "duringBody"] {
         for closure in ["abruptTCP", "cleanTLS"] {
           for round in 0..<2 { expected.insert("\(provider)-\(phase)-\(closure)-\(round)") }

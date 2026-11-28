@@ -25,12 +25,12 @@ they don't introduce one.
 
 **isolate's isolation boundary is the Linux guest VM itself** — an Apple
 Containerization VM on a macOS 27+ Apple Silicon host. The point of the
-tool is to run AI coding agents (Claude Code, Codex) with broad autonomy
+tool is to run AI coding agents (Claude Code, Codex, Antigravity) with broad autonomy
 *inside* that boundary, so the guest is deliberately permissive:
 
 - The guest user has passwordless `sudo` (`NOPASSWD:ALL`).
 - Claude runs with a managed `~/.claude/settings.json` carrying
-  `defaultMode: bypassPermissions`; the `codex`/`claude` launchers pass
+  `defaultMode: bypassPermissions`; the `codex`/`claude`/`antigravity` launchers pass
   `--dangerously-bypass-approvals-and-sandbox` / `--dangerously-skip-permissions`
   unless the user passes `--ask`.
 
@@ -283,14 +283,15 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   guest environment; under `proxy.mode = "off"` it is an error. A generic
   reference may not name a secret a proxy credential also reads. `vault:` is
   refused for values placed in the guest (`claude.api_key`, `codex.api_key`,
-  MCP headers).
+  `antigravity.api_key`, MCP headers).
 - **Proxy mode keeps the model API keys out of the guest entirely** (issue #411,
   `proxy`; `proxy.mode` is `"required"` by default). When enabled in remote model mode, `ANTHROPIC_API_KEY`
-  (Claude) and/or `OPENAI_API_KEY` (Codex) are **not** forwarded
-  (`suppressAnthropicKey` / `suppressOpenAIKey` in `Bootstrap.swift`, one per
-  provider); the host-side `iso-proxy` holds the real credential and the
+  (Claude), `OPENAI_API_KEY` (Codex) and/or `GEMINI_API_KEY` (Antigravity)
+  are **not** forwarded (the `suppressing` provider set in `Bootstrap.swift`);
+  the host-side `iso-proxy` holds the real credential and the
   guest gets only a per-instance capability token (Claude via `settings.json`,
-  Codex via the `iso_local` provider's bearer `env_key`). In proxy mode Codex's
+  Codex via the `iso_local` provider's bearer `env_key`, Antigravity as
+  `GEMINI_API_KEY` beside `GOOGLE_GEMINI_BASE_URL`). In proxy mode Codex's
   `~/.codex/auth.json` is also **not** staged onto the guest disk (it holds a
   refreshable subscription token). Each credential is resolved on the host and
   handed to `iso-proxy` over **stdin**, never argv or disk; a resolution failure
@@ -584,7 +585,8 @@ is read by other programs, so it is a disclosure boundary like stderr:
   reachable by exactly one guest. It is guarded
   by a per-instance capability token and forwards only its documented
   provider-specific operations to a fixed per-provider upstream
-  (`api.anthropic.com` / `api.openai.com`), never a guest-supplied host — one
+  (`api.anthropic.com` / `api.openai.com` / `generativelanguage.googleapis.com`),
+  never a guest-supplied host — one
   proxy process and one tunnel per (VM, provider). Its own TLS-verifying
   outbound HTTPS is the intended egress; a change that lets the guest influence
   the upstream host, widens the operation policy without security review, or
@@ -1400,8 +1402,10 @@ understanding the rationale; do flag a change that *widens* them:
   enforcing boot never relaunches its proxy (that would reset its quota);
   provider access is lost until the next boot. Quotas reset at every boot.
 - **Native agent installers are trusted build inputs.** Provisioning fetches
-  Claude's installer from `claude.ai` and Codex's from
-  `https://chatgpt.com/codex/install.sh` over HTTPS, then runs them as the
+  Claude's installer from `claude.ai`, Codex's from
+  `https://chatgpt.com/codex/install.sh` and Antigravity's from
+  `https://antigravity.google/cli/install.sh` (which downloads from its release
+  host and `storage.googleapis.com`) over HTTPS, then runs them as the
   configured guest user. Provisioning runs inside the `container build`
   builder VM, and live agent updates inside the instance VM. This build-time trust is distinct from the
   untrusted guest boundary described above.

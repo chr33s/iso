@@ -22,7 +22,8 @@ struct RunCommand: ParsableCommand {
       """)
 
   @OptionGroup var global: GlobalOptions
-  @Argument(help: "Agent id (`claude`, `codex`, or an installed definition)") var agent: String
+  @Argument(help: "Agent id (`claude`, `codex`, `antigravity`, or an installed definition)")
+  var agent: String
   @Option(
     name: .long, help: "Project directory (default: current directory)", completion: .directory)
   var workspace: String?

@@ -8,26 +8,30 @@ import IsoCore
 
 /// `iso agent update`: refresh agent binaries in a running VM without an image
 /// rebuild. Codex is reinstalled as root via its embedded installer (script on
-/// stdin); Claude Code runs `claude update` as the guest user.
+/// stdin); Claude Code and Antigravity run their own `update` as the guest user.
 package enum AgentUpdate {
   package enum Agent: Sendable, Equatable, CaseIterable {
-    case claude, codex
+    case claude, codex, antigravity
 
     package var display: String {
       switch self {
       case .claude: "Claude Code"
       case .codex: "Codex"
+      case .antigravity: "Antigravity"
       }
     }
   }
 
   /// The agents to update, in `Agent.allCases` order; none named means all.
+  /// An implicit selection skips agents the VM's image does not have.
   package struct Selection: Sendable, Equatable {
     package let agents: [Agent]
+    package let explicit: Bool
 
     package init(_ requested: Set<Agent>) {
       let wanted = requested.isEmpty ? Set(Agent.allCases) : requested
       agents = Agent.allCases.filter(wanted.contains)
+      explicit = !requested.isEmpty
     }
 
     package static let all = Selection([])
@@ -49,7 +53,7 @@ package enum AgentUpdate {
   }
 
   package enum CheckStatus: Sendable, Equatable {
-    case upToDate, updateAvailable, autoUpdates, unknown
+    case upToDate, updateAvailable, autoUpdates, unknown, notInstalled
   }
 
   package struct CheckRow: Sendable, Equatable {
@@ -60,7 +64,19 @@ package enum AgentUpdate {
   }
 
   static func binary(_ agent: Agent, user: GuestUser) -> GuestPath {
-    agent == .claude ? user.claudeBinary : GuestBinaries.codex
+    switch agent {
+    case .claude: user.claudeBinary
+    case .codex: GuestBinaries.codex
+    case .antigravity: GuestBinaries.agy
+    }
+  }
+
+  static func isInstalled(_ client: SSHClient, _ session: SSHSession, _ agent: Agent) throws
+    -> Bool
+  {
+    let bin = binary(agent, user: session.target.user)
+    try session.target.requireHandoff()
+    return client.succeeds(session.target, RemoteCommand().literal("test -x ").arg(bin.rawValue))
   }
 
   static func installedVersion(_ client: SSHClient, _ session: SSHSession, _ agent: Agent)
@@ -80,7 +96,7 @@ package enum AgentUpdate {
     _ agent: Agent, installed: SemanticVersion?, latest: SemanticVersion?
   ) -> CheckStatus {
     switch (agent, installed, latest) {
-    case (.claude, _, _): .autoUpdates
+    case (.claude, _, _), (.antigravity, _, _): .autoUpdates
     case (.codex, let installed?, let latest?): installed < latest ? .updateAvailable : .upToDate
     default: .unknown
     }
@@ -92,6 +108,10 @@ package enum AgentUpdate {
     latestCodexTag: () throws -> String, diagnostics: Diagnostics
   ) throws -> [String] {
     try selection.agents.map { agent in
+      guard try isInstalled(client, session, agent) else {
+        return checkLine(
+          CheckRow(agent: agent, installed: nil, latest: nil, status: .notInstalled))
+      }
       let installed = try installedVersion(client, session, agent)
       var latest: SemanticVersion?
       if agent == .codex {
@@ -118,6 +138,7 @@ package enum AgentUpdate {
         )
       case .autoUpdates: (installed, "up to date (auto-updates in background)")
       case .unknown: (installed, "could not determine latest version")
+      case .notInstalled: ("-", "not installed in this VM's image")
       }
     return "\(paddedText(row.agent.display, 12)) \(paddedText(version, 16)) \(note)"
   }
@@ -136,9 +157,15 @@ package enum AgentUpdate {
   ) throws {
     var failed = false
     for agent in selection.agents {
+      if !selection.explicit, try !isInstalled(client, session, agent) {
+        out("\(agent.display): not installed in this VM's image; skipped")
+        continue
+      }
       do {
         out(outcomeLine(agent, try update(client, session, agent)))
-        if agent == .claude { out("  note: Claude Code also auto-updates in the background.") }
+        if agent != .codex {
+          out("  note: \(agent.display) also auto-updates in the background.")
+        }
       } catch let failure as GuestHandoffFailure {
         throw failure
       } catch {
@@ -164,7 +191,7 @@ package enum AgentUpdate {
       } catch {
         throw ContextError("failed to reinstall \(agent.display)", cause: error)
       }
-    case .claude:
+    case .claude, .antigravity:
       do {
         try client.exec(
           session.target,

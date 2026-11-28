@@ -24,13 +24,15 @@ package struct Capability: Sendable, CustomStringConvertible, CustomDebugStringC
   package func authorizes(_ headers: [Header]) -> Bool {
     let authorization = headers.filter { $0.name.lowercased() == "authorization" }
     let apiKeys = headers.filter { $0.name.lowercased() == "x-api-key" }
-    guard authorization.count <= 1, apiKeys.count <= 1,
-      !authorization.isEmpty || !apiKeys.isEmpty
+    let googKeys = headers.filter { $0.name.lowercased() == "x-goog-api-key" }
+    guard authorization.count <= 1, apiKeys.count <= 1, googKeys.count <= 1,
+      !authorization.isEmpty || !apiKeys.isEmpty || !googKeys.isEmpty
     else { return false }
     if let value = authorization.first?.value {
       guard value.hasPrefix("Bearer "), verifies(String(value.dropFirst(7))) else { return false }
     }
     if let value = apiKeys.first?.value, !verifies(value) { return false }
+    if let value = googKeys.first?.value, !verifies(value) { return false }
     return true
   }
 

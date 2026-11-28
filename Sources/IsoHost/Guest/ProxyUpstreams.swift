@@ -7,11 +7,13 @@ import IsoConfiguration
 import IsoCore
 
 extension ProxyProvider {
-  /// 1000 apart so the per-instance ranges (index 0...252) never overlap.
+  /// 1000 apart so the per-instance ranges (index 0...252) never overlap;
+  /// filtered egress (`EgressPorts.base`) holds 10788.
   var basePort: UInt16 {
     switch self {
     case .anthropic: 8788
     case .openai: 9788
+    case .google: 11788
     }
   }
 
@@ -23,6 +25,7 @@ extension ProxyProvider {
     switch self {
     case .anthropic: "iso-anthropic"
     case .openai: "iso-openai"
+    case .google: "iso-google"
     }
   }
 }

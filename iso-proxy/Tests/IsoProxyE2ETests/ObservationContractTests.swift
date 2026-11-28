@@ -33,7 +33,7 @@ private enum Contract: CaseIterable, Sendable {
         ]
       }
     case .disconnect:
-      return ["anthropic", "openai"].flatMap { provider in
+      return ["anthropic", "openai", "google"].flatMap { provider in
         ["beforeHeaders", "duringBody"].flatMap { phase in
           ["abruptTCP", "cleanTLS"].flatMap { transport in
             (0..<2).map { round in

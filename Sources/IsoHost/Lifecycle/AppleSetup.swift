@@ -340,7 +340,7 @@ extension AppleBackend {
   {
     let required = [
       "/usr/bin/docker", "/usr/bin/gh", "\(guestUser.home)/.local/bin/claude",
-      "/usr/local/bin/codex",
+      "/usr/local/bin/codex", "/usr/local/bin/agy",
       "/usr/local/bin/codex-account", "/usr/bin/dbus-run-session", "/usr/bin/gnome-keyring-daemon",
       "/usr/bin/secret-tool",
     ]

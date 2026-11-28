@@ -16,14 +16,19 @@ package struct StoredUpstream: Sendable, Equatable {
 package struct ProxyState: Sendable, Equatable {
   package var anthropic: StoredUpstream?
   package var openai: StoredUpstream?
+  package var google: StoredUpstream?
 
-  package static let empty = ProxyState(anthropic: nil, openai: nil)
+  package static let empty = ProxyState(anthropic: nil, openai: nil, google: nil)
 
   package func override(for provider: ProxyProvider) -> StoredUpstream? {
-    provider == .anthropic ? anthropic : openai
+    switch provider {
+    case .anthropic: anthropic
+    case .openai: openai
+    case .google: google
+    }
   }
 
-  package var isEmpty: Bool { anthropic == nil && openai == nil }
+  package var isEmpty: Bool { anthropic == nil && openai == nil && google == nil }
 
   /// Secret-store names the credential proxy reads: the configured upstreams
   /// plus this VM's overrides. Empty under `proxy.mode = "off"`. A corrupt
@@ -56,7 +61,8 @@ package struct ProxyState: Sendable, Equatable {
         Array(data), format: .json, path: path, limits: .configuration)
       guard case .object(let members) = value else { throw HostError("Failed to parse proxy.json") }
       return ProxyState(
-        anthropic: try upstream(members["anthropic"]), openai: try upstream(members["openai"]))
+        anthropic: try upstream(members["anthropic"]), openai: try upstream(members["openai"]),
+        google: try upstream(members["google"]))
     } catch {
       throw HostError("Failed to parse proxy.json")
     }

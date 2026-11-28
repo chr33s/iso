@@ -78,6 +78,9 @@ package struct IsoConfig: Sendable, Equatable {
   package let setup: SetupConfig
   package let claude: AgentConfig
   package let codex: AgentConfig
+  /// `antigravity`: Google's Antigravity CLI (`agy`). Only `api_key`,
+  /// `env_forward` and `mcp_servers` apply.
+  package let antigravity: AgentConfig
   package let codexAuth: CodexAuthMode
   package let proxy: ProxyConfig
   /// Literal guest variables in byte order of name (Rust `BTreeMap` order).
@@ -111,8 +114,9 @@ package struct IsoConfig: Sendable, Equatable {
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
-    setup: SetupConfig, claude: AgentConfig, codex: AgentConfig, codexAuth: CodexAuthMode,
-    proxy: ProxyConfig, guestEnvironment: [GuestVariable], profiles: [String: CustomProfile],
+    setup: SetupConfig, claude: AgentConfig, codex: AgentConfig, antigravity: AgentConfig,
+    codexAuth: CodexAuthMode, proxy: ProxyConfig, guestEnvironment: [GuestVariable],
+    profiles: [String: CustomProfile],
     postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
@@ -135,6 +139,7 @@ package struct IsoConfig: Sendable, Equatable {
     self.setup = setup
     self.claude = claude
     self.codex = codex
+    self.antigravity = antigravity
     self.codexAuth = codexAuth
     self.proxy = proxy
     self.guestEnvironment = guestEnvironment
@@ -259,14 +264,23 @@ package enum CodexAuthMode: String, Sendable, Equatable {
 package enum ProxyAuthScheme: String, Sendable, Equatable {
   case apiKey = "api_key"
   case bearer
+  /// Gemini's `x-goog-api-key` header (Google only).
+  case googAPIKey = "goog_api_key"
 
   /// The injection name in iso-proxy's startup document and guest_env.json.
-  package var wireName: String { self == .apiKey ? "x_api_key" : "bearer" }
+  package var wireName: String {
+    switch self {
+    case .apiKey: "x_api_key"
+    case .bearer: "bearer"
+    case .googAPIKey: "x_goog_api_key"
+    }
+  }
 }
 
 package enum ProxyProvider: String, Sendable, CaseIterable, Codable {
   case anthropic
   case openai
+  case google
 
   /// Guest variables carrying this provider's credential, with their
   /// injection scheme. The one table for withholding them from the guest
@@ -279,6 +293,7 @@ package enum ProxyProvider: String, Sendable, CaseIterable, Codable {
         ("CLAUDE_CODE_OAUTH_TOKEN", .bearer),
       ]
     case .openai: [("OPENAI_API_KEY", .bearer)]
+    case .google: [("GEMINI_API_KEY", .googAPIKey)]
     }
   }
 
@@ -331,18 +346,23 @@ package struct ProxyUpstream: Sendable, Equatable {
 package struct ProxyConfig: Sendable, Equatable {
   package let anthropic: ProxyUpstream?
   package let openai: ProxyUpstream?
+  package let google: ProxyUpstream?
   package let mode: ProxyMode
 
-  package init(anthropic: ProxyUpstream?, openai: ProxyUpstream?, mode: ProxyMode = .auto) {
+  package init(
+    anthropic: ProxyUpstream?, openai: ProxyUpstream?, google: ProxyUpstream?,
+    mode: ProxyMode = .auto
+  ) {
     self.anthropic = anthropic
     self.openai = openai
+    self.google = google
     self.mode = mode
   }
 
   /// Secret-store names the configured upstreams read (`vault:NAME`).
   package var storedCredentialNames: Set<SecretName> {
     Set(
-      [anthropic, openai].compactMap {
+      [anthropic, openai, google].compactMap {
         SecretName.vaultReference($0?.credential.command.expose() ?? "")
       })
   }
@@ -351,6 +371,7 @@ package struct ProxyConfig: Sendable, Equatable {
     switch provider {
     case .anthropic: anthropic
     case .openai: openai
+    case .google: google
     }
   }
 }
@@ -600,7 +621,8 @@ extension IsoConfig {
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm,
       sshPort: sshPort,
-      github: github, setup: setup, claude: claude, codex: codex, codexAuth: codexAuth,
+      github: github, setup: setup, claude: claude, codex: codex, antigravity: antigravity,
+      codexAuth: codexAuth,
       proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
@@ -614,7 +636,7 @@ extension IsoConfig {
   /// Every agent's section, by configuration key. Checks that apply to all
   /// agents iterate this rather than naming each one.
   package var agents: [(key: String, config: AgentConfig)] {
-    [("claude", claude), ("codex", codex)]
+    [("claude", claude), ("codex", codex), ("antigravity", antigravity)]
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -652,7 +674,8 @@ extension IsoConfig {
     }
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
-      claude: agent(claude), codex: agent(codex), codexAuth: codexAuth, proxy: proxy,
+      claude: agent(claude), codex: agent(codex), antigravity: agent(antigravity),
+      codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
@@ -673,7 +696,8 @@ extension IsoConfig {
     }
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
-      claude: agent(claude), codex: agent(codex), codexAuth: codexAuth, proxy: proxy,
+      claude: agent(claude), codex: agent(codex), antigravity: agent(antigravity),
+      codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
@@ -686,8 +710,10 @@ extension IsoConfig {
   package func overridingProxyMode(_ mode: ProxyMode) -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
-      claude: claude, codex: codex, codexAuth: codexAuth,
-      proxy: ProxyConfig(anthropic: proxy.anthropic, openai: proxy.openai, mode: mode),
+      claude: claude, codex: codex, antigravity: antigravity,
+      codexAuth: codexAuth,
+      proxy: ProxyConfig(
+        anthropic: proxy.anthropic, openai: proxy.openai, google: proxy.google, mode: mode),
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
@@ -700,7 +726,8 @@ extension IsoConfig {
   package func overridingTransport(_ transport: NetworkTransport) -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
-      claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
+      claude: claude, codex: codex, antigravity: antigravity,
+      codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
@@ -722,7 +749,8 @@ extension IsoConfig {
     let filter = mode == .filtered ? egressFilter.allowing(extraHosts) : .empty
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
-      claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
+      claude: claude, codex: codex, antigravity: antigravity,
+      codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,

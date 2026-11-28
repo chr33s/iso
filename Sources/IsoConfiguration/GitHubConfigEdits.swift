@@ -18,7 +18,8 @@ extension IsoConfig {
   package func replacingGitHub(_ github: GitHubAuth?) -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
-      claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
+      claude: claude, codex: codex, antigravity: antigravity,
+      codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
@@ -32,7 +33,9 @@ extension IsoConfig {
   package func disablingGitHub() -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: .off,
-      setup: SetupConfig(promptForPAT: false), claude: claude, codex: codex, codexAuth: codexAuth,
+      setup: SetupConfig(promptForPAT: false), claude: claude, codex: codex,
+      antigravity: antigravity,
+      codexAuth: codexAuth,
       proxy: proxy, guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,

@@ -43,8 +43,9 @@ import Testing
     for provider in Provider.allCases { try await upstream.probeTLS(provider: provider) }
     // The client side completes before the server reads its Finished message,
     // so the server-side count can trail `probeTLS` returning.
-    try await waitForHandshakes(handshakes, atLeast: 2)
-    #expect(handshakes.withLockedValue { $0 } == 2)
+    let probes = Provider.allCases.count
+    try await waitForHandshakes(handshakes, atLeast: probes)
+    #expect(handshakes.withLockedValue { $0 } == probes)
     let guest = try await ClientBootstrap(group: group).channelInitializer { channel in
       guests.add(channel)
       return channel.eventLoop.makeSucceededVoidFuture()
@@ -55,11 +56,12 @@ import Testing
           "POST /v1/messages HTTP/1.1\r\nAuthorization: Bearer \(token)\r\nContent-Length: 0\r\n\r\n"
       )
     ).get()
-    try await waitForHandshakes(handshakes, atLeast: 3)
-    #expect(handshakes.withLockedValue { $0 } == 3, "forwarded request did not use the context")
+    try await waitForHandshakes(handshakes, atLeast: probes + 1)
+    #expect(
+      handshakes.withLockedValue { $0 } == probes + 1, "forwarded request did not use the context")
     // The default context still verifies against system trust only.
     await #expect(throws: (any Error).self) { try await system.probeTLS(provider: .anthropic) }
-    #expect(handshakes.withLockedValue { $0 } == 3)
+    #expect(handshakes.withLockedValue { $0 } == probes + 1)
   } catch {
     Issue.record(error)
   }

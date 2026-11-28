@@ -23,12 +23,13 @@ package enum HeaderPolicy {
     -> [Header]
   {
     var result = try filtered(headers).filter {
-      !["authorization", "x-api-key", "host"].contains($0.name.lowercased())
+      !["authorization", "x-api-key", "x-goog-api-key", "host"].contains($0.name.lowercased())
     }
     result.append(Header("host", provider.hostname))
     switch injection.scheme {
     case .xAPIKey: result.append(Header("x-api-key", injection.credential.expose()))
     case .bearer: result.append(Header("authorization", "Bearer " + injection.credential.expose()))
+    case .xGoogAPIKey: result.append(Header("x-goog-api-key", injection.credential.expose()))
     }
     return result
   }

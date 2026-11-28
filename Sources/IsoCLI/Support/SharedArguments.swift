@@ -10,7 +10,7 @@ import IsoSecrets
 struct BootArguments: ParsableArguments {
   @Flag(
     name: .customLong("no-agents"),
-    help: "Skip injecting Claude Code and Codex credentials/config into the VM")
+    help: "Skip injecting Claude Code, Codex and Antigravity credentials/config into the VM")
   var noAgents = false
   @Flag(help: "Use github = \"off\" for this invocation and skip the GitHub PAT prompt")
   var noGithub = false

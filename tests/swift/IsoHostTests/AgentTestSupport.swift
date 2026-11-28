@@ -121,14 +121,14 @@ struct FakeGuest {
       printf '%s\n' "$last" >> "$S/commands.log"
       printf 'ARGV %s\n' "$*" >> "$S/argv.log"
       # Requested names must never reach the host ssh itself.
-      for v in ANTHROPIC_API_KEY OPENAI_API_KEY ISO_LOCAL_API_KEY GITHUB_TOKEN CLAUDE_CODE_OAUTH_TOKEN GUEST_VAR; do
+      for v in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY ISO_LOCAL_API_KEY GITHUB_TOKEN CLAUDE_CODE_OAUTH_TOKEN GUEST_VAR; do
         eval "isset=\${$v+x}"
         if [ -n "$isset" ]; then printf '%s\n' "$v" >> "$S/host-env.log"; fi
       done
       case "$last" in
         "test -x "*) [ -f "$S/flags/test-x-fails" ] && exit 1; exit 0 ;;
       esac
-      cmd=$(printf '%s' "$last" | sed -e "s#/home/ubuntu/.local/bin/claude#$S/guestbin/claude#g" -e "s#/usr/local/bin/codex#$S/guestbin/codex#g")
+      cmd=$(printf '%s' "$last" | sed -e "s#/home/ubuntu/.local/bin/claude#$S/guestbin/claude#g" -e "s#/usr/local/bin/codex#$S/guestbin/codex#g" -e "s#/usr/local/bin/agy#$S/guestbin/agy#g")
       # As sshd: the login shell runs the command; it records what the
       # guest sees once the alias wrapper has restored the names.
       HOME="$S/home" PATH="$S/guestbin:/usr/bin:/bin" SHELL="$S/bin/guestshell" exec "$S/bin/guestshell" -c "$cmd"
@@ -138,7 +138,7 @@ struct FakeGuest {
       #"""
       #!/bin/sh
       S="$(cd "$(dirname "$0")/.." && pwd)"
-      for v in ANTHROPIC_API_KEY OPENAI_API_KEY ISO_LOCAL_API_KEY GITHUB_TOKEN CLAUDE_CODE_OAUTH_TOKEN GUEST_VAR; do
+      for v in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL ISO_LOCAL_API_KEY GITHUB_TOKEN CLAUDE_CODE_OAUTH_TOKEN GUEST_VAR; do
         eval "isset=\${$v+x}"
         if [ -n "$isset" ]; then eval "printf '%s=%s\n' $v \"\$$v\"" >> "$S/env.log"; fi
       done
@@ -197,6 +197,14 @@ struct FakeGuest {
       STUB="$(cd "$(dirname "$0")/.." && pwd)"
       printf 'codex %s\n' "$*" >> "$STUB/guest-calls.log"
       case "$1" in --version) echo "codex-cli 0.50.0" ;; esac
+      """#, mode: 0o755)
+    try writeFile(
+      root + "/guestbin/agy",
+      #"""
+      #!/bin/sh
+      STUB="$(cd "$(dirname "$0")/.." && pwd)"
+      printf 'agy %s\n' "$*" >> "$STUB/guest-calls.log"
+      case "$1" in --version) echo "1.5.18" ;; esac
       """#, mode: 0o755)
     try writeFile(
       root + "/guestbin/timeout", "#!/bin/sh\nshift\nexec \"$@\"\n", mode: 0o755)

@@ -13,11 +13,12 @@ import IsoSecrets
 struct IsoCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "iso",
-    abstract: "Isolated VM environment for running Claude Code and Codex",
+    abstract: "Isolated VM environment for running Claude Code, Codex and Antigravity",
     version: IsoVersion.string,
     subcommands: [
       Up.self, Setup.self, DevcontainerCommand.self, Start.self, Shell.self,
-      ClaudeCommand.self, ClaudeAgentsCommand.self, CodexCommand.self, RunCommand.self,
+      ClaudeCommand.self, ClaudeAgentsCommand.self, CodexCommand.self, AntigravityCommand.self,
+      RunCommand.self,
       RunCleanup.self, Stop.self, Destroy.self,
       List.self, Status.self, AgentCommand.self, ModelCommand.self, Logs.self, Push.self,
       Pull.self, Diff.self, Exec.self, CodeCommand.self, ZedCommand.self, Editor.self,

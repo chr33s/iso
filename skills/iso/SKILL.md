@@ -29,7 +29,7 @@ Every command, grouped by who may run it:
 3. **Never handle credentials.** Do not put keys or tokens on a command line,
    in `--env KEY=VALUE`, in files you write, or on a pipe into `iso`. The
    user enters them, in their own terminal: provider keys with
-   `iso proxy setup` (or `iso proxy setup --openai`), guest secrets with
+   `iso proxy setup` (or `--openai`, `--google`), guest secrets with
    `iso secrets set NAME`. A stored secret is referenced as
    `--env NAME={vault:NAME}`; once referenced, its value is readable by
    everything in the guest, so add a reference only when the user asked for
@@ -118,7 +118,7 @@ Each argument after `--` is quoted individually, so pipes, `&&` and globs need
 command's; 255 can be `ssh` itself (stderr says which).
 
 Interactive sessions (`iso shell NAME`, `iso claude NAME`, `iso codex NAME`,
-`iso ca NAME`) need a real terminal. Do not start them from a non-interactive
+`iso antigravity NAME`, `iso ca NAME`) need a real terminal. Do not start them from a non-interactive
 tool call; tell the user the command to run. For a one-shot agent session the
 user can run `iso run claude --workspace DIR` (or `--rm` for a disposable VM);
 preview it safely with `iso run claude --workspace DIR --dry-run --json`.

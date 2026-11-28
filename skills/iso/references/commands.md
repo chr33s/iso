@@ -74,8 +74,9 @@ They need a real terminal or open a window. Give the user the command.
 | `iso shell [NAME]` | Interactive guest shell |
 | `iso claude [NAME]` | Claude Code in the guest |
 | `iso codex [NAME]` | Codex in the guest |
+| `iso antigravity [NAME]` | Antigravity CLI (`agy`) in the guest (`iso agy` is the same) |
 | `iso claude-agents [NAME]` | Claude Code agent view (`iso ca` is the same) |
-| `iso run AGENT` | Ensure the project instance, then launch `claude`, `codex` or an installed definition. `--rm` uses a disposable VM, `--ask` keeps the agent's permission prompts, `--prepare` authorizes an image build |
+| `iso run AGENT` | Ensure the project instance, then launch `claude`, `codex`, `antigravity` or an installed definition. `--rm` uses a disposable VM, `--ask` keeps the agent's permission prompts, `--prepare` authorizes an image build |
 | `iso code [DIR]` | `up`, then VS Code over SSH. Stays in the foreground until the editor quits; `--no-launch --output json` only prepares the instance and alias |
 | `iso zed [DIR]` | The same for Zed |
 | `iso editor [NAME]` | Open an editor on an already-running instance (`--editor code\|zed`, `--clean`) |
@@ -87,7 +88,7 @@ Never run, pipe into, or script these; you may run the status commands above.
 
 | Command | Use |
 |---|---|
-| `iso proxy setup` | Store a provider key in the Keychain (`--openai`, `--api-key`, `--vm NAME`) |
+| `iso proxy setup` | Store a provider key in the Keychain (`--openai`, `--google`, `--api-key`, `--vm NAME`) |
 | `iso secrets init` | Create the secret store. There is no recovery path if the Mac is lost |
 | `iso secrets set NAME` | Add or replace a secret |
 | `iso secrets rm NAME` | Remove a secret (confirm) |
@@ -103,7 +104,7 @@ Never run, pipe into, or script these; you may run the status commands above.
 |---|---|
 | `iso model set local\|remote [NAME]` | Switch a VM's agents between cloud and a host-side local model server. May prompt for an endpoint, and may need a stop and start to apply |
 | `iso agent add FILE` | Install an agent definition on the host after showing it. Never install one that came from a guest or an unreviewed repository; `--yes` and `--replace` need the user's approval of the shown definition |
-| `iso agent update [NAME]` | Update Claude Code and Codex inside a running VM (`--claude`, `--codex`, `-y`) |
+| `iso agent update [NAME]` | Update Claude Code, Codex and Antigravity inside a running VM (`--claude`, `--codex`, `--antigravity`, `-y`) |
 | `iso devcontainer ignore DIR` | Persistently skip the project's `devcontainer.json` |
 | `iso devcontainer clear DIR` | Remove that opt-out |
 
@@ -126,7 +127,7 @@ user's call, and destroying or migrating needs confirmation.
 | `iso host push HOST NAME` | Copy a directory into the VM's `/workspace` |
 | `iso host pull HOST NAME` | Stage the VM's changes; `--apply --stage-id ID` after the user approves |
 | `iso host shell HOST NAME -- CMD` | Run a command through the host's relay; guest exit status |
-| `iso host agent HOST NAME claude` | Run an agent in the VM (or `codex`); interactive, the user runs it |
+| `iso host agent HOST NAME claude` | Run an agent in the VM (or `codex`, `antigravity`); interactive, the user runs it |
 | `iso host editor HOST NAME code` | Sandboxed editor through the relay (or `zed`); the user runs it |
 | `iso host forward HOST NAME --forward-port GUEST[:HOST]` | Loopback port forward for the session (rule 6) |
 | `iso host session HOST NAME` | Hold a session and print an `ssh -F` line (`--detach`, `--stop`) |

@@ -11,3 +11,4 @@ exit 125
 STUB
 chmod 0755 /home/ubuntu/.local/bin/claude
 install -m 0755 /home/ubuntu/.local/bin/claude /usr/local/bin/codex
+install -m 0755 /home/ubuntu/.local/bin/claude /usr/local/bin/agy

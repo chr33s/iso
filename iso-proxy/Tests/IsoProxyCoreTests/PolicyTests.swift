@@ -25,12 +25,15 @@ private let wrong = String(repeating: "b", count: 64)
   let capability = try Capability(token)
   let auth = Header("Authorization", "Bearer " + token)
   let apiKey = Header("X-API-Key", token)
-  for headers in [[auth], [apiKey], [auth, apiKey]] {
+  let googKey = Header("X-Goog-Api-Key", token)
+  for headers in [[auth], [apiKey], [googKey], [auth, apiKey], [apiKey, googKey]] {
     #expect(capability.authorizes(headers))
   }
   for headers in [
     [Header](), [auth, auth], [apiKey, apiKey],
     [auth, Header("x-api-key", wrong)], [Header("authorization", "Bearer " + wrong), apiKey],
+    [googKey, googKey], [googKey, Header("x-api-key", wrong)],
+    [apiKey, Header("x-goog-api-key", wrong)], [Header("x-goog-api-key", wrong)],
     [Header("authorization", "Basic " + token), apiKey],
     [Header("authorization", "Bearer ")], [Header("authorization", "bearer " + token)],
     [Header("authorization", "Bearer " + String(repeating: "a", count: 100_000))],
@@ -40,9 +43,16 @@ private let wrong = String(repeating: "b", count: 64)
 }
 
 @Test func exactOperationPolicy() throws {
+  let allowedPaths: [Provider: [String]] = [
+    .anthropic: ["/v1/messages", "/v1/messages/count_tokens"], .openai: ["/v1/responses"],
+    .google: [
+      "/v1beta/models/gemini-3-pro:generateContent",
+      "/v1beta/models/gemini-3.0-flash_x:streamGenerateContent",
+      "/v1beta/models/gemini-3-pro:countTokens",
+    ],
+  ]
   for provider in Provider.allCases {
-    let allowed =
-      provider == .anthropic ? ["/v1/messages", "/v1/messages/count_tokens"] : ["/v1/responses"]
+    let allowed = allowedPaths[provider]!
     for path in allowed {
       for suffix in ["", "?beta=true", "?", "?x=%2f"] {
         let target = try RequestTarget(path + suffix)
@@ -60,13 +70,36 @@ private let wrong = String(repeating: "b", count: 64)
             method: "POST", target: try RequestTarget(path + suffix), provider: provider))
       }
     }
-    for path in ["/v1/files", "/v1/organizations/invites", "/v1/../v1/messages", "/v1/%6dessages"] {
+    for path in [
+      "/v1/files", "/v1/organizations/invites", "/v1/../v1/messages", "/v1/%6dessages",
+      "/v1beta/models/gemini:embedContent", "/v1beta/models/:generateContent",
+      "/v1beta/models/a/b:generateContent", "/v1beta/models/a%2fb:generateContent",
+      "/v1beta/models/Gemini:generateContent", "/v1beta/models/a:generateContent:x",
+      "/v1beta/models/../files:generateContent", "/v1beta/files", "/upload/v1beta/files",
+      "/v1beta/cachedContents", "/v1/models/gemini-3-pro:generateContent",
+      "/v1beta/models/" + String(repeating: "a", count: 129) + ":generateContent",
+    ] {
       #expect(
         !OperationPolicy.allows(method: "POST", target: try RequestTarget(path), provider: provider)
       )
     }
-    let other = try RequestTarget(provider == .anthropic ? "/v1/responses" : "/v1/messages")
-    #expect(!OperationPolicy.allows(method: "POST", target: other, provider: provider))
+    let listing = try RequestTarget("/v1beta/models?pageSize=1000")
+    #expect(
+      OperationPolicy.allows(method: "GET", target: listing, provider: provider)
+        == (provider == .google))
+    for path in [
+      "/v1beta/models/gemini-3-pro", "/v1beta/models/x:generateContent", "/v1beta/files",
+    ] {
+      #expect(
+        !OperationPolicy.allows(method: "GET", target: try RequestTarget(path), provider: provider))
+    }
+    for other in Provider.allCases where other != provider {
+      for path in allowedPaths[other]! {
+        #expect(
+          !OperationPolicy.allows(
+            method: "POST", target: try RequestTarget(path), provider: provider))
+      }
+    }
   }
 }
 
@@ -81,6 +114,7 @@ private let wrong = String(repeating: "b", count: 64)
   }
   #expect(Provider.anthropic.hostname == "api.anthropic.com")
   #expect(Provider.openai.hostname == "api.openai.com")
+  #expect(Provider.google.hostname == "generativelanguage.googleapis.com")
   for provider in Provider.allCases {
     #expect(provider.scheme == "https")
     #expect(provider.port == 443)
@@ -107,11 +141,13 @@ private let wrong = String(repeating: "b", count: 64)
   var headers = hopNames.map { Header($0, $0 == "Connection" ? "x-private, HOST" : "discard") }
   headers += [
     Header("connection", "x-second"), Header("x-private", "discard"), Header("x-second", "discard"),
-    Header("authorization", "Bearer " + token), Header("x-api-key", token), Header("host", "evil"),
+    Header("authorization", "Bearer " + token), Header("x-api-key", token),
+    Header("x-goog-api-key", token), Header("host", "evil"),
     Header("content-type", "application/json"), Header("anthropic-version", "2023-06-01"),
   ]
   for (provider, scheme) in [
     (Provider.anthropic, Injection.Scheme.xAPIKey), (.anthropic, .bearer), (.openai, .bearer),
+    (.google, .xGoogAPIKey),
   ] {
     let injection = try Injection(scheme: scheme, credential: Secret("secret"), provider: provider)
     let out = try HeaderPolicy.request(headers, provider: provider, injection: injection)
@@ -119,10 +155,13 @@ private let wrong = String(repeating: "b", count: 64)
     #expect(out.contains(Header("host", provider.hostname)))
     #expect(out.contains(Header("content-type", "application/json")))
     #expect(out.contains(Header("anthropic-version", "2023-06-01")))
-    #expect(
-      out.contains(
-        scheme == .bearer ? Header("authorization", "Bearer secret") : Header("x-api-key", "secret")
-      ))
+    let injected =
+      switch scheme {
+      case .bearer: Header("authorization", "Bearer secret")
+      case .xAPIKey: Header("x-api-key", "secret")
+      case .xGoogAPIKey: Header("x-goog-api-key", "secret")
+      }
+    #expect(out.contains(injected))
     #expect(!out.contains { $0.value.contains(token) })
   }
   let response = try HeaderPolicy.response([

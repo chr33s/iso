@@ -106,6 +106,15 @@ package enum MacProvision {
     rm -f "$installer"
     ln -sfh /Users/iso/.local/bin/codex /usr/local/bin/codex
     su - iso -c '/usr/local/bin/codex --version' </dev/null
+
+    log 'Installing the Antigravity CLI'
+    installer=$(mktemp /tmp/iso-installer.XXXXXX)
+    chmod 0644 "$installer"
+    curl -fsSL --retry 3 -o "$installer" https://antigravity.google/cli/install.sh
+    su - iso -c "PATH='/Users/iso/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' bash '$installer'" </dev/null
+    rm -f "$installer"
+    ln -sfh /Users/iso/.local/bin/agy /usr/local/bin/agy
+    su - iso -c '/usr/local/bin/agy --version' </dev/null
     log 'Provisioning finished'
     """
   }

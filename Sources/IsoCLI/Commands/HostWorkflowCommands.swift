@@ -388,19 +388,20 @@ struct HostEditor: ParsableCommand {
 struct HostAgent: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "agent",
-    abstract: "Run Claude or Codex in a remote VM; credentials stay on this client")
+    abstract: "Run Claude, Codex or Antigravity in a remote VM; credentials stay on this client")
 
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Argument(help: "claude or codex") var agent: String
-  @Flag(help: "Prompt for permissions instead of skipping them (claude)") var ask = false
+  @Argument(help: "claude, codex or antigravity") var agent: String
+  @Flag(help: "Prompt for permissions instead of skipping them (claude, antigravity)") var ask =
+    false
   @Argument(parsing: .postTerminator, help: "Arguments passed to the agent") var args: [String] = []
 
   func run() throws {
     try IsoCLI.run {
       guard let kind = RemoteAgent(rawValue: agent) else {
-        throw HostError("agent must be claude or codex")
+        throw HostError("agent must be claude, codex or antigravity")
       }
       let env = try HostCommandEnvironment(global)
       let remote = try env.resolve(host)
@@ -415,7 +416,12 @@ struct HostAgent: ParsableCommand {
         client: env.clientLabel)
       defer { session.finish() }
       session.startRenewing(diagnostics: env.diagnostics)
-      let extra = kind == .claude && ask ? ["--permission-mode", "default"] + args : args
+      let extra: [String]
+      switch kind {
+      case .claude: extra = ask ? ["--permission-mode", "default"] + args : args
+      case .codex: extra = args
+      case .antigravity: extra = AntigravityChecks.launchArguments(ask: ask, args)
+      }
       let code = try kind.run(
         session: session, binding: binding, config: env.config, vmEgress: observation.egress,
         environment: env.environment,

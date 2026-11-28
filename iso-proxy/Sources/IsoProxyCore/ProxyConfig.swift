@@ -14,12 +14,14 @@ package struct Injection: Sendable, CustomStringConvertible {
   package enum Scheme: String, Decodable, Sendable {
     case xAPIKey = "x_api_key"
     case bearer
+    /// Gemini's `x-goog-api-key` header; Google only.
+    case xGoogAPIKey = "x_goog_api_key"
   }
   package let scheme: Scheme
   package let credential: Secret
 
   package init(scheme: Scheme, credential: Secret, provider: Provider) throws {
-    guard provider != .openai || scheme == .bearer,
+    guard Self.accepts(provider: provider, scheme: scheme),
       !credential.expose().isEmpty,
       credential.expose().utf8.allSatisfy({ (33...126).contains($0) })
     else { throw PolicyError.invalidConfig }
@@ -27,6 +29,14 @@ package struct Injection: Sendable, CustomStringConvertible {
     self.credential = credential
   }
   package var description: String { "Injection(\(scheme.rawValue), <redacted>)" }
+
+  static func accepts(provider: Provider, scheme: Scheme) -> Bool {
+    switch provider {
+    case .anthropic: scheme != .xGoogAPIKey
+    case .openai: scheme == .bearer
+    case .google: scheme == .xGoogAPIKey
+    }
+  }
 }
 
 package struct LoopbackAddress: Sendable {
@@ -234,7 +244,12 @@ package struct ProxyAuthorization: Sendable {
     policyEpoch = wire.policyEpoch
     proxyGenerationID = wire.proxyGenerationID
     self.policy = policy
-    resource = provider == .anthropic ? .anthropic : .openai
+    resource =
+      switch provider {
+      case .anthropic: .anthropic
+      case .openai: .openai
+      case .google: .google
+      }
   }
 
   static func isUUID(_ text: String) -> Bool {

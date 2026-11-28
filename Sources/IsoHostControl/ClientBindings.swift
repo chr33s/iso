@@ -547,12 +547,13 @@ package enum RemoteWorkspace {
   }
 }
 
-/// Interactive Claude and Codex on a remote VM in client-broker mode (spec 10.2): credentials
+/// Interactive Claude, Codex and Antigravity on a remote VM in client-broker mode (spec 10.2): credentials
 /// resolve on this client into the confined proxy, reaching the guest only through a reverse
 /// tunnel in the relayed route. Nothing secret goes to the execution host.
 package enum RemoteAgent: String, Sendable {
   case claude
   case codex
+  case antigravity
 
   /// Prepares the agent through the relayed route and runs it attached; returns the remote
   /// status. `required` withholds every provider variable and Codex `auth.json`; `off`
@@ -568,12 +569,24 @@ package enum RemoteAgent: String, Sendable {
     return config.overridingProxyMode(.required).droppingHeaderedMCPServers()
   }
 
+  static let antigravityNeedsProxy =
+    "a remote Antigravity reaches Gemini only through this client's credential proxy; run `iso proxy setup --google`"
+
   /// Codex reads the proxy's capability token from `ISO_LOCAL_API_KEY`. It opens only this
   /// client's proxy via the relay and is guest-visible by design.
   func agentEnvironment(_ shadow: Instance) -> EnvForward {
     var env = EnvForward()
     if self == .codex, let token = ProxyLauncher.capabilityToken(shadow, provider: .openai) {
       env.set(ModelRouting.codexLocalEnvKey, token)
+    }
+    if self == .antigravity,
+      let token = ProxyLauncher.capabilityToken(shadow, provider: .google)
+    {
+      for (name, value) in ModelRouting.antigravityProxyEnv(
+        baseURL: ProxyLauncher.guestBaseURL(shadow, provider: .google), capabilityToken: token)
+      {
+        env.set(name, value)
+      }
     }
     return env
   }
@@ -652,6 +665,17 @@ package enum RemoteAgent: String, Sendable {
     case .codex:
       try bootstrap.bootstrapCodex(guest, instance: shadow, mode: .restart)
       binary = GuestBinaries.codex
+    case .antigravity:
+      // Without its broker, agy would fall back to a guest-held Google sign-in;
+      // refuse before changing anything in the guest.
+      guard try ProxyState.effectiveUpstream(shadow, .google, config: config.proxy) != nil else {
+        throw HostError(Self.antigravityNeedsProxy)
+      }
+      try bootstrap.bootstrapAntigravity(guest, instance: shadow, mode: .restart)
+      guard ProxyLauncher.capabilityToken(shadow, provider: .google) != nil else {
+        throw HostError(Self.antigravityNeedsProxy)
+      }
+      binary = GuestBinaries.agy
     }
     if let failure = session.failure { throw failure }
     guard let ssh = client.sshExecutable() else { throw HostError("ssh is not installed") }

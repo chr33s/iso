@@ -232,6 +232,36 @@ struct CodexCommand: ParsableCommand {
   }
 }
 
+struct AntigravityCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "antigravity",
+    abstract: "Launch the Antigravity CLI (agy) inside the VM (skips permissions by default)",
+    aliases: ["agy"])
+
+  @OptionGroup var global: GlobalOptions
+  @Flag(help: "Prompt for permissions instead of skipping them") var ask = false
+  @Argument(
+    help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
+  var name: InstanceName?
+  @Argument(parsing: .captureForPassthrough, help: "Extra arguments passed to `agy`")
+  var args: [String] = []
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      let (ask, args) = splitAsk(ask, args)
+      try context.auditedAttach(
+        .antigravity, agent: "antigravity", name: name, permissionMode: ask ? .ask : .bypass
+      ) { _, session, audit in
+        try InteractiveSSH.run(
+          context.ssh, session,
+          [GuestBinaries.agy.rawValue] + AntigravityChecks.launchArguments(ask: ask, args),
+          diagnostics: context.diagnostics, audit: audit)
+      }
+    }
+  }
+}
+
 // MARK: - model
 
 extension ModelMode: ExpressibleByArgument {}
@@ -552,14 +582,16 @@ struct AgentUpdateCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "update", abstract: "Update coding agent(s) to the latest version inside the VM.",
     discussion:
-      "With no agent flag, both Claude Code and Codex are updated. The VM must be running.")
+      "With no agent flag, Claude Code, Codex and Antigravity are all updated. The VM must be running."
+  )
 
   @OptionGroup var global: GlobalOptions
   @Argument(
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
-  @Flag(help: "Update Claude Code (default: update both agents)") var claude = false
-  @Flag(help: "Update Codex (default: update both agents)") var codex = false
+  @Flag(help: "Update Claude Code (default: update every agent)") var claude = false
+  @Flag(help: "Update Codex (default: update every agent)") var codex = false
+  @Flag(help: "Update Antigravity (default: update every agent)") var antigravity = false
   @Flag(help: "Only report installed vs. latest versions — change nothing") var check = false
   @Flag(name: .shortAndLong, help: "Skip the confirmation prompt") var yes = false
 
@@ -569,6 +601,7 @@ struct AgentUpdateCommand: ParsableCommand {
       var requested = Set<AgentUpdate.Agent>()
       if claude { requested.insert(.claude) }
       if codex { requested.insert(.codex) }
+      if antigravity { requested.insert(.antigravity) }
       let selection = AgentUpdate.Selection(requested)
       // Administrative preparation is not a user/agent workload launch.
       let running = try context.backend.resolveRunning(name, instances: context.listInstances())
@@ -604,7 +637,7 @@ struct ProxySetup: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "setup",
     abstract:
-      "Store a provider credential in the macOS Keychain and wire it into `proxy.<provider>` (the default) or a per-VM override. Anthropic (Claude) is the default provider; pass `--openai` for Codex"
+      "Store a provider credential in the macOS Keychain and wire it into `proxy.<provider>` (the default) or a per-VM override. Anthropic (Claude) is the default provider; pass `--openai` for Codex or `--google` for Antigravity"
   )
 
   @OptionGroup var global: GlobalOptions
@@ -612,6 +645,10 @@ struct ProxySetup: ParsableCommand {
     help:
       "Configure the `OpenAI` (Codex) upstream instead of Anthropic. `OpenAI` keys are always injected as `Authorization: Bearer`"
   ) var openai = false
+  @Flag(
+    help:
+      "Configure the Google Gemini (Antigravity) upstream instead of Anthropic. Gemini API keys are always injected as `x-goog-api-key`"
+  ) var google = false
   @Flag(help: "Configure the Anthropic (Claude) upstream (the default provider)") var anthropic =
     false
   @Option(
@@ -622,12 +659,14 @@ struct ProxySetup: ParsableCommand {
   var vm: String?
   @Flag(
     help:
-      "Anthropic only: store an API key (`x-api-key`) instead of a Claude `setup-token`. Ignored for `--openai` (always Bearer)"
+      "Anthropic only: store an API key (`x-api-key`) instead of a Claude `setup-token`. Ignored for `--openai` (always Bearer) and `--google` (always `x-goog-api-key`)"
   ) var apiKey = false
 
   func validate() throws {
-    if openai && anthropic {
-      throw UsageError("the argument '--openai' cannot be used with '--anthropic'")
+    let chosen = [("--anthropic", anthropic), ("--openai", openai), ("--google", google)]
+      .filter(\.1).map(\.0)
+    if chosen.count > 1 {
+      throw UsageError("the argument '\(chosen[1])' cannot be used with '\(chosen[0])'")
     }
   }
 
@@ -635,7 +674,8 @@ struct ProxySetup: ParsableCommand {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
       try Self.run(
-        context, provider: openai ? .openai : .anthropic, vm: vm, apiKey: apiKey,
+        context, provider: openai ? .openai : google ? .google : .anthropic, vm: vm,
+        apiKey: apiKey,
         target: global.writableTarget(environment: context.environment),
         token: TerminalPrompt.secret)
     }
@@ -697,7 +737,11 @@ struct ProxySetup: ParsableCommand {
       [
         "Paste your Anthropic API key (sk-ant-...). It is stored in the macOS Keychain, never as plaintext in the config."
       ]
-    case (.anthropic, .bearer):
+    case (.google, _):
+      [
+        "Paste your Gemini API key from Google AI Studio. It is stored in the macOS Keychain, never as plaintext in the config, and injected as x-goog-api-key upstream. Google account sign-in is not supported in proxy mode — use an API key."
+      ]
+    case (.anthropic, _):
       [
         "Run `claude setup-token` (needs a Claude subscription) to generate a long-lived, inference-scoped token (~1 year), then paste it below.",
         "It is stored in the macOS Keychain, never as plaintext in the config or in the guest.",

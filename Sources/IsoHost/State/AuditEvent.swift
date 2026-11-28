@@ -184,7 +184,7 @@ package enum AuditEventKind: String, Codable, Sendable, CaseIterable {
 /// any of them.
 package enum AuditFacts {
   package enum Command: String, Codable, Sendable {
-    case run, claude, codex
+    case run, claude, codex, antigravity
     case claudeAgents = "claude-agents"
   }
 

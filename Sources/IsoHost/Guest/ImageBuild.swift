@@ -444,6 +444,7 @@ package enum Provisioning {
     s += EmbeddedResources.guestScript("claude-code.sh") + "\n"
     s += EmbeddedResources.guestScript("codex.sh") + "\n"
     s += EmbeddedResources.guestScript("codex-account.sh") + "\n"
+    s += EmbeddedResources.guestScript("antigravity.sh") + "\n"
     s += "\necho '  [guest] Cleaning up...'\n"
     s += "apt-get clean\n"
     s += "rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n"

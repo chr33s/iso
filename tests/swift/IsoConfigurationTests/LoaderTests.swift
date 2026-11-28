@@ -821,3 +821,53 @@ private func uncommentedTemplateMember(_ marker: String) throws -> String {
   #expect(try load("{\(github)}").github == .off)
   #expect(ConfigTemplate.jsonc.contains(#""off" by default"#))
 }
+
+/// Antigravity takes only `api_key`, `env_forward` and `mcp_servers`; its MCP
+/// servers are stdio without `env`, or streamable HTTP. Unlike Claude and
+/// Codex, an absent section does not take `GEMINI_API_KEY` from the host
+/// environment.
+@Test func antigravitySectionAcceptsOnlyWhatAgyConsumes() throws {
+  let absent = try load(
+    "{}", environment: ConfigEnvironment(home: "/h", variables: ["GEMINI_API_KEY": "g-env"]))
+  #expect(absent.antigravity.apiKey == nil)
+  let present = try load(
+    "{\"antigravity\": {}}",
+    environment: ConfigEnvironment(home: "/h", variables: ["GEMINI_API_KEY": "g-env"]))
+  #expect(present.antigravity.apiKey == nil)
+  let full = try load(
+    #"""
+    {"antigravity": {"api_key": "cmd:printf k", "env_forward": ["EXTRA"],
+      "mcp_servers": {"s": {"command": "x", "args": ["a"]},
+                      "h": {"type": "http", "url": "https://h.example/", "headers": {"A": "b"}}}}}
+    """#)
+  #expect(full.antigravity.envForward.map(\.rawValue) == ["EXTRA"])
+  #expect(full.antigravity.mcpServers["s"] == .stdio(command: "x", args: ["a"], env: [:]))
+  #expect(full.headeredMCPServerNames == ["h"])
+  for key in ["marketplaces", "plugins", "config_dir", "local_model", "auth"] {
+    let refused = try #require(fieldError("{\"antigravity\": {\"\(key)\": []}}"), "\(key)")
+    #expect(refused.field == "antigravity.\(key)", "\(key)")
+  }
+  let sse = try #require(
+    fieldError(
+      #"{"antigravity": {"mcp_servers": {"e": {"type": "sse", "url": "https://x.example/"}}}}"#))
+  #expect(sse.field == "antigravity.mcp_servers.e.type" && sse.reason.contains("SSE"))
+  let env = try #require(
+    fieldError(
+      #"{"antigravity": {"mcp_servers": {"s": {"command": "x", "env": {"K": "K"}}}}}"#))
+  #expect(env.field == "antigravity.mcp_servers.s.env")
+}
+
+/// `proxy.google` injects only `x-goog-api-key`.
+@Test func googleProxyUpstreamIsAlwaysAGeminiKey() throws {
+  let config = try load(#"{"proxy": {"google": {"credential": "cmd:printf k"}}}"#)
+  #expect(config.proxy.google?.auth == .googAPIKey)
+  #expect(config.proxy.upstream(for: .google) == config.proxy.google)
+  #expect(ProxyAuthScheme.googAPIKey.wireName == "x_goog_api_key")
+  for auth in ["bearer", "api_key"] {
+    let refused = try #require(
+      fieldError(#"{"proxy": {"google": {"credential": "cmd:printf k", "auth": "\#(auth)"}}}"#))
+    #expect(refused.field == "proxy.google.auth")
+  }
+  #expect(ProxyProvider.route(forVariable: "GEMINI_API_KEY")! == (.google, .googAPIKey))
+  #expect(ProxyProvider.route(forVariable: "GOOGLE_API_KEY") == nil)
+}

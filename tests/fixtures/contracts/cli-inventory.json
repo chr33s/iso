@@ -14,8 +14,14 @@
     "<name>",
     "--claude",
     "--codex",
+    "--antigravity",
     "--check",
     "--yes -y"
+  ],
+  "antigravity": [
+    "--ask",
+    "<name>",
+    "<args>"
   ],
   "audit": [
     "<name>",
@@ -353,6 +359,7 @@
   "proxy": [],
   "proxy setup": [
     "--openai",
+    "--google",
     "--anthropic",
     "--vm",
     "--api-key"

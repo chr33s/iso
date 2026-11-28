@@ -7,7 +7,7 @@ package struct AgentDefinitionID: Hashable, Sendable, CustomStringConvertible, C
   package static let maxLength = 64
   /// Built-in definition ids and every compiled adapter id. A catalog file
   /// cannot use one of these, so it cannot shadow an implementation.
-  package static let reserved: Set<String> = ["claude", "codex", "none"]
+  package static let reserved: Set<String> = ["claude", "codex", "antigravity", "none"]
   package let rawValue: String
 
   package init(_ raw: String) throws(ValidationError) {
@@ -52,7 +52,8 @@ package struct AgentAdapterID: Hashable, Sendable, CustomStringConvertible, Coda
   package static let none = AgentAdapterID(unchecked: "none")
   package static let claude = AgentAdapterID(unchecked: "claude")
   package static let codex = AgentAdapterID(unchecked: "codex")
-  package static let compiled: [AgentAdapterID] = [.none, .claude, .codex]
+  package static let antigravity = AgentAdapterID(unchecked: "antigravity")
+  package static let compiled: [AgentAdapterID] = [.none, .claude, .codex, .antigravity]
   package let rawValue: String
 
   /// Literals above are valid by inspection; the validating initializer is

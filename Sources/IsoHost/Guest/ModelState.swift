@@ -166,6 +166,14 @@ package enum ModelRouting {
     return env
   }
 
+  /// Antigravity reads its endpoint and key only from the process
+  /// environment: the guest-visible capability stands in for the Gemini key.
+  package static func antigravityProxyEnv(baseURL: String, capabilityToken: Secret<String>)
+    -> [(String, Secret<String>)]
+  {
+    [("GOOGLE_GEMINI_BASE_URL", Secret(baseURL)), ("GEMINI_API_KEY", capabilityToken)]
+  }
+
   package static func claudeProxyEnvBlock(baseURL: String, capabilityToken: String) -> [String:
     String]
   {

@@ -33,6 +33,8 @@ package enum GuestBinaries {
   package static let codex = GuestPath("/usr/local/bin/codex")
   /// Codex under a guest Secret Service session (ChatGPT account auth).
   package static let codexAccount = GuestPath("/usr/local/bin/codex-account")
+  /// Antigravity CLI, linked to the guest user's self-updating install.
+  package static let agy = GuestPath("/usr/local/bin/agy")
 }
 
 extension GuestUser {
@@ -150,6 +152,7 @@ package struct AgentBootstrap: Sendable {
 
     for (variable, section, agent) in [
       ("ANTHROPIC_API_KEY", "claude", config.claude), ("OPENAI_API_KEY", "codex", config.codex),
+      ("GEMINI_API_KEY", "antigravity", config.antigravity),
     ] {
       if let reason = withheld[variable] {
         diagnostics.debug("\(reason): not forwarding \(variable) into the guest")
@@ -270,6 +273,14 @@ package struct AgentBootstrap: Sendable {
     _ = try secrets.resolve(names)
   }
 
+  /// Recognized provider variables a session forwards as raw keys. A proxied
+  /// provider's variable can only hold iso's capability (Gemini's is
+  /// `GEMINI_API_KEY`), so it is not one.
+  static func rawProviderVariables(_ env: EnvForward, proxied: Set<ProxyProvider>) -> [String] {
+    ProxyProvider.allCases.filter { !proxied.contains($0) }.flatMap(\.recognizedVariables)
+      .filter(env.contains)
+  }
+
   /// Providers whose proxy serves this VM's remote-model sessions.
   func proxiedProviders(_ instance: Instance) throws -> Set<ProxyProvider> {
     guard try ModelState.loadOrDefault(instance).mode == .remote else { return [] }
@@ -336,6 +347,15 @@ package struct AgentBootstrap: Sendable {
           let token = ProxyLauncher.capabilityToken(instance, provider: .openai)
         {
           env.set(ModelRouting.codexLocalEnvKey, token)
+        }
+        if model.mode == .remote, proxied.contains(.google),
+          let token = ProxyLauncher.capabilityToken(instance, provider: .google)
+        {
+          for (name, value) in ModelRouting.antigravityProxyEnv(
+            baseURL: ProxyLauncher.guestBaseURL(instance, provider: .google), capabilityToken: token
+          ) {
+            env.set(name, value)
+          }
         }
       }
     }
@@ -479,7 +499,7 @@ package struct AgentBootstrap: Sendable {
     }
     let session = try prepareSession(instance, target: preparationTarget, repo: repo)
     try preparationTarget.requireHandoff()
-    let raw = ProxyProvider.allCases.flatMap(\.recognizedVariables).filter(session.env.contains)
+    let raw = Self.rawProviderVariables(session.env, proxied: try proxiedProviders(instance))
     if !raw.isEmpty {
       BoundaryAudit.record(instance, .rawProviderForward(raw), diagnostics: diagnostics)
       diagnostics.warn(
@@ -588,6 +608,7 @@ package struct AgentBootstrap: Sendable {
     let agents = try withGuestComputerUse(instance)
     try agents.bootstrapClaude(session, instance: instance, mode: mode)
     try agents.bootstrapCodex(session, instance: instance, mode: mode)
+    try agents.bootstrapAntigravity(session, instance: instance, mode: mode)
   }
 
   package static let computerUseServer = "iso-cu"

@@ -8,8 +8,8 @@ contract is [`design/iso-policy.md`](design/iso-policy.md).
 
 | Action | Resources | Enforced by |
 |---|---|---|
-| `credential.use` | `provider:anthropic`, `provider:openai` | the credential proxy, per request |
-| `proxy.request` | `provider:anthropic`, `provider:openai` | the credential proxy, per request |
+| `credential.use` | `provider:anthropic`, `provider:openai`, `provider:google` | the credential proxy, per request |
+| `proxy.request` | `provider:anthropic`, `provider:openai`, `provider:google` | the credential proxy, per request |
 | `workspace.pull.apply` | `workspace:attached` | the host, at `iso pull --apply` |
 
 ## Configuring

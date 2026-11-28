@@ -257,7 +257,7 @@ enum ConfigDecoder {
     -> IsoConfig
   {
     try r.rejectUnknown(allowing: [
-      "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
+      "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "antigravity", "proxy",
       "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
       "workspace", "egress", "egress_filter", "limits", "security", "editor", "execution",
       "policy", "network", "computer_use", "coreai",
@@ -308,13 +308,16 @@ enum ConfigDecoder {
         r, "claude", env: env, apiKeyVariable: "ANTHROPIC_API_KEY", mcp: .claude),
       codex: try agent(
         r, "codex", env: env, apiKeyVariable: "OPENAI_API_KEY", mcp: .codex),
+      antigravity: try agent(
+        r, "antigravity", env: env, apiKeyVariable: "GEMINI_API_KEY", mcp: .antigravity),
       codexAuth: try r.defaulted("codex", .apiKey) { v, p throws(FieldError) in
         try ObjectReader(v, at: p).defaulted("auth", .apiKey) { v, p throws(FieldError) in
           try Parse.stringEnum(v, p, [CodexAuthMode.apiKey, .chatgpt])
         }
       },
       proxy: try r.defaulted(
-        "proxy", ProxyConfig(anthropic: nil, openai: nil, mode: presetDefaults.proxyMode)
+        "proxy",
+        ProxyConfig(anthropic: nil, openai: nil, google: nil, mode: presetDefaults.proxyMode)
       ) { v, p throws(FieldError) in try proxy(v, p, defaultMode: presetDefaults.proxyMode) },
       guestEnvironment: try r.defaulted("guest_env", []) { v, p throws(FieldError) in
         let values = try Parse.map(v, p, Parse.string)
@@ -637,9 +640,12 @@ enum ConfigDecoder {
   /// The agent CLI that registers an agent's MCP servers. Codex has stdio and
   /// streamable HTTP only (an `sse` entry would silently run as streamable
   /// HTTP), and it passes a variable through only under its own name (`env_vars`).
+  /// Antigravity (`agy mcp add`) has stdio and streamable HTTP only, and takes
+  /// environment values, not variable names, so `env` is refused.
   enum MCPRegistrar {
     case claude
     case codex
+    case antigravity
   }
 
   static func agent(
@@ -648,13 +654,19 @@ enum ConfigDecoder {
   ) throws(FieldError) -> AgentConfig {
     // An absent section takes the key from the environment; a present
     // section without `api_key` does not (baseline serde default semantics).
+    // Antigravity never does: a host GEMINI_API_KEY predates iso's support
+    // for it, so it reaches a guest only when configured.
     guard let value = r.members[key] else {
       return AgentConfig(
-        apiKey: env.variables[apiKeyVariable].map(Secret.init), envForward: [], marketplaces: [],
+        apiKey: mcp == .antigravity ? nil : env.variables[apiKeyVariable].map(Secret.init),
+        envForward: [], marketplaces: [],
         plugins: [], mcpServers: [:], configDirectory: .disabled, localModel: nil)
     }
     let path = r.child(key)
     let a = try ObjectReader(value, at: path)
+    if mcp == .antigravity {
+      try a.rejectUnknown(allowing: ["api_key", "env_forward", "mcp_servers"])
+    }
     return AgentConfig(
       apiKey: try a.optional("api_key", Parse.guestSecret),
       envForward: try a.defaulted("env_forward", []) { v, p throws(FieldError) in
@@ -671,6 +683,21 @@ enum ConfigDecoder {
       mcpServers: try a.defaulted("mcp_servers", [:]) { v, p throws(FieldError) in
         try Parse.map(v, p) { v, p throws(FieldError) in
           let server = try mcpServer(v, p)
+          if mcp == .antigravity {
+            switch server {
+            case .sse:
+              throw FieldError(
+                p + [.key("type")],
+                "\(key) cannot register an SSE MCP server (it supports stdio and streamable HTTP); use \"type\": \"http\" for a server that serves streamable HTTP"
+              )
+            case .stdio(_, _, let env) where !env.isEmpty:
+              throw FieldError(
+                p + [.key("env")],
+                "\(key) does not pass host variables to an MCP server; remove `env` and forward the variable with env_forward"
+              )
+            case .stdio, .http: return server
+            }
+          }
           guard mcp == .codex else { return server }
           switch server {
           case .sse:
@@ -812,6 +839,9 @@ enum ConfigDecoder {
       },
       openai: try r.optional("openai") { v, p throws(FieldError) in
         try upstream(v, p, [.bearer])
+      },
+      google: try r.optional("google") { v, p throws(FieldError) in
+        try upstream(v, p, [.googAPIKey])
       },
       mode: try r.defaulted("mode", defaultMode) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, [ProxyMode.auto, .required, .off])

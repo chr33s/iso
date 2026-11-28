@@ -98,6 +98,8 @@ struct ProxyMain {
       try await upstream.probeTLS(provider: .anthropic)
       log("iso-proxy self-test: probing OpenAI TLS")
       try await upstream.probeTLS(provider: .openai)
+      log("iso-proxy self-test: probing Google TLS")
+      try await upstream.probeTLS(provider: .google)
       try await upstream.shutdown()
       try await group.shutdownGracefully()
       log(

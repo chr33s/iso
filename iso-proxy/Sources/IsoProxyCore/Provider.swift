@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 package enum Provider: String, Sendable, Decodable, CaseIterable {
-  case anthropic, openai
+  case anthropic, openai, google
 
   package var hostname: String {
     switch self {
     case .anthropic: "api.anthropic.com"
     case .openai: "api.openai.com"
+    case .google: "generativelanguage.googleapis.com"
     }
   }
   package var port: Int { 443 }

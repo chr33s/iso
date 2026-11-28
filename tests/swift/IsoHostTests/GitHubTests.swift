@@ -662,6 +662,7 @@ private let assignmentConfig = #"""
         #""guest_env": {"\#(name)": "not-printed"}"#,
         #""claude": {"env_forward": ["\#(name)"]}"#,
         #""codex": {"env_forward": ["\#(name)"]}"#,
+        #""antigravity": {"env_forward": ["\#(name)"]}"#,
         nil,
       ]
       for source in sources {

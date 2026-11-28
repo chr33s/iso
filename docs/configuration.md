@@ -405,12 +405,40 @@ sections of [docs/claude-integration.md](claude-integration.md) and
 [docs/codex-integration.md](codex-integration.md) for how each endpoint is
 materialized into guest config.
 
+## `antigravity` section
+
+Configures the Antigravity CLI (`agy`). Unlike `claude` and `codex`, unknown
+keys are refused: only these three apply.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `api_key` | string | Gemini API key forwarded as `GEMINI_API_KEY`. Accepts `cmd:`. Unlike `claude` and `codex`, a host `GEMINI_API_KEY` is never used on its own. Withheld from the guest whenever `proxy.google`, `proxy.mode = "required"` or `egress = "none"` applies. |
+| `env_forward` | array | Host environment variable names to forward into sessions. |
+| `mcp_servers` | object | MCP servers written to the guest's `~/.gemini/config/mcp_config.json`: stdio (`command`, `args`; no `env`) or `"type": "http"` (streamable HTTP, `url`, `headers`). `"sse"` and a stdio `env` map are refused when the configuration loads. |
+
+```jsonc
+{
+  "antigravity": {
+    "env_forward": ["CUSTOM_TOKEN"],
+    "mcp_servers": {
+      "docs": { "type": "http", "url": "https://mcp.example.com/mcp" }
+    }
+  }
+}
+```
+
+When a key or the Google proxy reaches the guest, bootstrap sets
+`"modelProvider": "gemini"` in `~/.gemini/antigravity-cli/settings.json`, and
+removes it otherwise. See [antigravity-integration.md](antigravity-integration.md).
+
 ## `proxy` section
 
 Credential-proxy mode requires macOS 27+ and the `iso-proxy` companion.
 
-`proxy.anthropic` and `proxy.openai` declare host-side
-credential-injecting upstreams for Claude Code and Codex. When an upstream is
+`proxy.anthropic`, `proxy.openai` and `proxy.google` declare host-side
+credential-injecting upstreams for Claude Code, Codex and Antigravity.
+`proxy.google` takes a Gemini API key and always injects it as
+`x-goog-api-key` (its only `auth` value is `"goog_api_key"`). When an upstream is
 configured, isolate runs a `iso-proxy` process on the host for the lifetime of
 each remote-mode VM: the guest is pointed at the proxy (a base-URL override) and
 holds only a per-instance capability token, while the real credential stays on
@@ -439,7 +467,7 @@ the instance's `proxy.json`, not in the config file).
 | Value | Behavior |
 |-------|----------|
 | `"auto"` | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one uses direct credential forwarding, with a warning at `up`/`start`. |
-| `"required"` (default) | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) reaches the guest by any path. Values isolate would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
+| `"required"` (default) | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) reaches the guest by any path. Values isolate would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
 | `"off"` | No proxy starts; configured upstreams and per-VM overrides are ignored, and credentials are forwarded as without a proxy. A `{vault:}` provider secret from `--env`/`--env-file` is an error rather than being forwarded. |
 
 `proxy.<provider>.credential` and `github.pat` tokens also accept

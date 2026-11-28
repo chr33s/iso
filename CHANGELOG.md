@@ -8,6 +8,36 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Added
+
+- **Antigravity as a third agent:** images install Google's Antigravity CLI
+  (`agy`), `iso antigravity` (alias `iso agy`) launches it with
+  `--dangerously-skip-permissions` unless `--ask`, and `iso run antigravity`,
+  `iso host agent … antigravity` and `iso agent update --antigravity` cover it.
+  A new `antigravity` configuration section takes `api_key`, `env_forward` and
+  `mcp_servers` (stdio without `env`, or streamable HTTP).
+- **Google credential proxy:** `iso proxy setup --google` and `proxy.google`
+  broker a Gemini API key through `iso-proxy` to
+  `generativelanguage.googleapis.com`, injected as `x-goog-api-key`. Only the
+  Gemini generation, token-count and model-list operations are forwarded.
+  `GEMINI_API_KEY` is withheld from the guest whenever the proxy, `proxy.mode =
+  "required"` or `egress = "none"` applies, and policies can name
+  `provider:google`.
+
+### Changed
+
+- **`GEMINI_API_KEY` is a provider credential:** under `proxy.mode =
+  "required"` (the default), `egress = "none"` or an enforcing policy, an
+  existing `env_forward`, `guest_env`, `containerEnv` or saved `--env`
+  declaration of it is now refused, and `--env GEMINI_API_KEY={vault:…}` feeds
+  the Google proxy instead of the guest. A host `GEMINI_API_KEY` is never
+  forwarded unless configured.
+- **`antigravity` is a reserved agent id:** an installed `antigravity`
+  definition is shadowed by the built-in one and listed as invalid; reinstall it
+  under another id.
+- **`iso agent update` without flags** also updates Antigravity, and skips
+  agents a VM's image does not have.
+
 ## v0.11.0
 
 ### Security

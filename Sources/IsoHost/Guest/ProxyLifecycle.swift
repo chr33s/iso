@@ -145,7 +145,13 @@ package struct ProxyLauncher: Sendable {
       .info,
       "Started \(provider.rawValue) credential proxy on 127.0.0.1:\(port) (guest → 127.0.0.1:\(port))"
     )
-    return ProxyHandle(baseURL: "http://127.0.0.1:\(port)", capabilityToken: token)
+    return ProxyHandle(
+      baseURL: Self.guestBaseURL(instance, provider: provider), capabilityToken: token)
+  }
+
+  /// The proxy's address on the guest's loopback (the reverse tunnel's end).
+  package static func guestBaseURL(_ instance: Instance, provider: ProxyProvider) -> String {
+    "http://127.0.0.1:\(provider.port(instance))"
   }
 
   package func stop(_ instance: Instance, provider: ProxyProvider) {

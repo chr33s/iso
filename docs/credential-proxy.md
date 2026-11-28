@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Credential-injecting proxy (`proxy`)
 
-Status: **Anthropic (Claude Code) and OpenAI (Codex); macOS 27+ only.** Required by default:
+Status: **Anthropic (Claude Code), OpenAI (Codex) and Google Gemini (Antigravity); macOS 27+ only.** Required by default:
 without a security preset, `proxy.mode` is `"required"` (the `provider-only`
 baseline). Design:
 [`design/issue-411-injecting-proxy.md`](design/issue-411-injecting-proxy.md).
@@ -30,10 +30,14 @@ for the lifetime of the VM:
     (`base_url` at the proxy, `wire_api = "responses"`) with the capability
     token supplied as the provider's bearer `env_key`. Proxy mode pins no model
     — Codex keeps its own, only its egress is redirected.
+  - Antigravity sessions get `GOOGLE_GEMINI_BASE_URL` at the proxy and the
+    capability token as `GEMINI_API_KEY`, which `agy` sends as `x-goog-api-key`
+    ([antigravity-integration.md](antigravity-integration.md)).
 - The proxy verifies that token (constant-time), strips it, injects the real
-  credential (`x-api-key`, or `Authorization: Bearer`), and streams the request
-  to the pinned upstream (`api.anthropic.com` / `api.openai.com`) over TLS.
-- The raw `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is no longer forwarded, and in
+  credential (`x-api-key`, `Authorization: Bearer`, or `x-goog-api-key`), and
+  streams the request to the pinned upstream (`api.anthropic.com` /
+  `api.openai.com` / `generativelanguage.googleapis.com`) over TLS.
+- The raw `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` is no longer forwarded, and in
   proxy mode Codex's `~/.codex/auth.json` is **not** staged onto the guest disk
   (it holds a refreshable subscription token — the exact at-rest exposure #411
   closes). Codex subscription is therefore out of scope in proxy mode; use an
@@ -63,6 +67,13 @@ before connecting upstream. The only allowed method/path pairs are:
 | OpenAI | `POST /v1/responses` |
 | Anthropic | `POST /v1/messages` |
 | Anthropic | `POST /v1/messages/count_tokens` |
+| Google | `POST /v1beta/models/{model}:generateContent` |
+| Google | `POST /v1beta/models/{model}:streamGenerateContent` |
+| Google | `POST /v1beta/models/{model}:countTokens` |
+| Google | `GET /v1beta/models` (model list) |
+
+A Google `{model}` is one plain id segment (lowercase letters, digits, `.`,
+`-`, `_`, at most 128 bytes); encoded, nested or empty segments do not match.
 
 All other provider operations receive a local `403`. Unknown providers are
 rejected at startup. Filtered boots additionally expose the fixed local-only
@@ -101,7 +112,7 @@ and SSE have no corresponding total-size cap.
 ## Enabling it
 
 The easiest path is `iso proxy setup`: it takes a pasted credential, stores it
-in the macOS Keychain (service `iso-anthropic` or `iso-openai`), and writes
+in the macOS Keychain (service `iso-anthropic`, `iso-openai` or `iso-google`), and writes
 the `proxy.<provider>` object for you with a `cmd:` reference — so the
 credential is never plaintext in the config. The Keychain is the only built-in
 store; if it is unavailable, setup fails rather than falling back.
@@ -112,6 +123,9 @@ store; if it is unavailable, setup fails rather than falling back.
   inference-scoped, ~1 year).
 - **OpenAI (Codex):** `iso proxy setup --openai` takes an OpenAI API key
   (always injected as `Authorization: Bearer`).
+- **Google (Antigravity):** `iso proxy setup --google` takes a Gemini API key
+  from Google AI Studio (always injected as `x-goog-api-key`). Google account
+  sign-in is not supported in proxy mode.
 
 Or configure it by hand:
 
@@ -125,6 +139,10 @@ Or configure it by hand:
     "openai": {
       "credential": "cmd:op read op://Private/OpenAI/credential",
       "auth": "bearer"   // OpenAI keys inject as Authorization: Bearer
+    },
+    "google": {
+      "credential": "cmd:op read op://Private/Gemini/credential"
+      // always x-goog-api-key ("auth": "goog_api_key")
     }
   }
 }

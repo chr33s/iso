@@ -529,10 +529,13 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
 @Test func agentSelectionsAndVersions() throws {
   #expect(AgentUpdate.Selection([.claude]).agents == [.claude])
   #expect(AgentUpdate.Selection([.codex]).agents == [.codex])
+  #expect(AgentUpdate.Selection([.antigravity]).agents == [.antigravity])
   #expect(AgentUpdate.Selection([]) == .all)
-  #expect(AgentUpdate.Selection([.codex, .claude]).agents == [.claude, .codex])
-  #expect(AgentUpdate.Selection.all.agents == [.claude, .codex])
-  #expect(AgentUpdate.Selection.all.phrase == "Claude Code and Codex")
+  #expect(AgentUpdate.Selection([.antigravity, .claude]).agents == [.claude, .antigravity])
+  #expect(AgentUpdate.Selection([.antigravity, .claude]).phrase == "Claude Code and Antigravity")
+  #expect(AgentUpdate.Selection.all.agents == [.claude, .codex, .antigravity])
+  #expect(AgentUpdate.Selection.all.phrase == "Claude Code, Codex and Antigravity")
+  #expect(!AgentUpdate.Selection.all.explicit && AgentUpdate.Selection([.codex]).explicit)
 
   let v = { (text: String) in SemanticVersion.first(in: text) }
   #expect(v("1.2.3") == v("v1.2.3"))
@@ -583,8 +586,11 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
   #expect(lines[0] == "Claude Code: already at the latest version (2.1.0)")
   #expect(lines[1] == "  note: Claude Code also auto-updates in the background.")
   #expect(lines[2] == "Codex: already at the latest version (0.50.0)")
+  #expect(lines[3] == "Antigravity: already at the latest version (1.5.18)")
+  #expect(lines[4] == "  note: Antigravity also auto-updates in the background.")
   let commands = guest.log("commands.log")
   #expect(commands.contains("'/home/ubuntu/.local/bin/claude' update"))
+  #expect(commands.contains("'/usr/local/bin/agy' update"))
   #expect(commands.contains("sudo env GUEST_USER='ubuntu' ISO_FORCE_INSTALL=1 bash -s"))
   #expect(readFile(guest.root + "/sudo-stdin") == EmbeddedResources.guestScript("codex.sh"))
 
@@ -597,6 +603,27 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
     guest.client, session, .init([.codex]), latestCodexTag: { throw HostError("offline") },
     diagnostics: guest.sink.diagnostics)
   #expect(offline[0].contains("could not determine latest version"))
+}
+
+/// An image without an agent: an implicit update skips it and `--check`
+/// says so; naming the agent still tries, and fails.
+@Test func agentUpdateSkipsAgentsTheImageDoesNotHave() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  try guest.flag("test-x-fails")
+  let session = SSHSession(target: guest.target)
+  var lines: [String] = []
+  try AgentUpdate.run(guest.client, session, .all) { lines.append($0) }
+  #expect(
+    lines
+      == AgentUpdate.Agent.allCases.map {
+        "\($0.display): not installed in this VM's image; skipped"
+      })
+  let check = try AgentUpdate.check(
+    guest.client, session, .init([.antigravity]), latestCodexTag: { "v1.0.0" },
+    diagnostics: guest.sink.diagnostics)
+  #expect(check == ["Antigravity  -                not installed in this VM's image"])
+  #expect(!check[0].contains("up to date"))
 }
 
 @Test func aStoredSecretIsEitherAProxyCredentialOrGuestVisible() throws {

@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 isolate is a native Swift reimplementation of
 [coop](https://github.com/trailofbits/coop) from Trail of Bits, for running
-Claude Code and Codex in disposable Linux VMs on **macOS 27+ Apple Silicon**. It
+Claude Code, Codex and Antigravity in disposable Linux VMs on **macOS 27+ Apple Silicon**. It
 replaces the Rust host and credential proxy with Swift and uses a purpose-built
 runtime on Apple Containerization. Focusing on one host platform and removing
 the former Rust networking and TLS dependency tree reduces what needs

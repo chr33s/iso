@@ -45,7 +45,7 @@ private func exerciseUpstreamDisconnect(
   let admitted = NIOLockedValueBox<(any Channel)?>(nil)
   let connections = Capacity(1)
   let requests = Capacity(1)
-  let path = provider == .anthropic ? "/v1/messages" : "/v1/responses"
+  let path = provider.fixturePath
   let token = String(repeating: "a", count: 64)
   let secret = "upstream-disconnect-test-only"
   let config = try ProxyConfig(
@@ -53,7 +53,7 @@ private func exerciseUpstreamDisconnect(
       "version": 1, "listen": "127.0.0.1:0", "provider": provider.rawValue,
       "capability_token": token,
       "injection": [
-        "scheme": provider == .anthropic ? "x_api_key" : "bearer", "credential": secret,
+        "scheme": provider.fixtureScheme, "credential": secret,
       ],
     ]))
   let upstream = try await ServerBootstrap(group: group).childChannelInitializer { channel in

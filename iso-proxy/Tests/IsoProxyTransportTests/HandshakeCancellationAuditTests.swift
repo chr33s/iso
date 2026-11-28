@@ -75,7 +75,7 @@ private final class AuditStalledTLS: ChannelInboundHandler {
 
 @Test(arguments: Provider.allCases)
 func bridgeCancellationClosesStalledTLSHandshake(provider: Provider) async throws {
-  let path = provider == .anthropic ? "/v1/messages" : "/v1/responses"
+  let path = provider.fixturePath
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
   let received = NIOLockedValueBox(false)
   let closed = NIOLockedValueBox(false)
@@ -96,7 +96,7 @@ func bridgeCancellationClosesStalledTLSHandshake(provider: Provider) async throw
       "version": 1, "listen": "127.0.0.1:0", "provider": provider.rawValue,
       "capability_token": token,
       "injection": [
-        "scheme": provider == .anthropic ? "x_api_key" : "bearer",
+        "scheme": provider.fixtureScheme,
         "credential": "handshake-test-only",
       ],
     ]))
