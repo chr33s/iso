@@ -13,9 +13,9 @@ let package = Package(
     .executable(name: "iso-cu-mcp", targets: ["IsoCUMCP"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/containerization.git", exact: "0.54.0"),
+    .package(url: "https://github.com/apple/containerization.git", exact: "0.57.0"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
-    .package(url: "https://github.com/apple/swift-system.git", exact: "1.8.1"),
+    .package(url: "https://github.com/apple/swift-system.git", exact: "1.9.0"),
   ],
   targets: [
     // Guest-driven computer use, shared by the runtime and both guest
