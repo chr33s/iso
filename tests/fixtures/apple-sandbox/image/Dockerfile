@@ -1,6 +1,6 @@
 # Guest image for tests/integration-apple-sandbox.sh.
 # A persistent systemd machine userspace: sshd + Docker, no baked identity.
-FROM --platform=linux/arm64 ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+FROM --platform=linux/arm64 ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
 
 ENV container=container \
     DEBIAN_FRONTEND=noninteractive
