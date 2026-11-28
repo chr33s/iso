@@ -307,7 +307,7 @@ func bootstrapCompletionRetainsOriginalTransportIdentity(change: String) throws 
   }
 }
 
-@Test(arguments: [AgentUpdate.Agent.claude, .codex])
+@Test(arguments: AgentUpdate.Agent.allCases)
 func agentUpdatePreservesReadinessFailuresInsteadOfReportingUnknownOrContinuing(
   agent: AgentUpdate.Agent
 ) throws {
@@ -317,7 +317,7 @@ func agentUpdatePreservesReadinessFailuresInsteadOfReportingUnknownOrContinuing(
   var lookups = 0
   #expect(throws: GuestHandoffFailure.self) {
     _ = try AgentUpdate.check(
-      guest.client, SSHSession(target: revoked), .init(claude: false, codex: true),
+      guest.client, SSHSession(target: revoked), .init([.codex]),
       latestCodexTag: {
         lookups += 1
         return "v1.0.0"
@@ -336,7 +336,7 @@ func agentUpdatePreservesReadinessFailuresInsteadOfReportingUnknownOrContinuing(
   #expect(throws: GuestHandoffFailure.self) {
     try AgentUpdate.run(
       guest.client, SSHSession(target: late),
-      .init(claude: agent == .claude, codex: agent == .codex)
+      .init([agent])
     ) {
       lines.append($0)
     }

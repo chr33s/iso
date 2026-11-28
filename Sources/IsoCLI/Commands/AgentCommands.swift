@@ -566,7 +566,10 @@ struct AgentUpdateCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
-      let selection = AgentUpdate.Selection(claude: claude, codex: codex)
+      var requested = Set<AgentUpdate.Agent>()
+      if claude { requested.insert(.claude) }
+      if codex { requested.insert(.codex) }
+      let selection = AgentUpdate.Selection(requested)
       // Administrative preparation is not a user/agent workload launch.
       let running = try context.backend.resolveRunning(name, instances: context.listInstances())
       let session = try context.agents.session(for: running)

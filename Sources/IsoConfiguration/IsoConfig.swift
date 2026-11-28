@@ -611,6 +611,12 @@ extension IsoConfig {
       coreAI: coreAI)
   }
 
+  /// Every agent's section, by configuration key. Checks that apply to all
+  /// agents iterate this rather than naming each one.
+  package var agents: [(key: String, config: AgentConfig)] {
+    [("claude", claude), ("codex", codex)]
+  }
+
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
   /// with any header), which a remote guest must not receive. Sorted names.
   package var headeredMCPServerNames: [String] {
@@ -623,7 +629,8 @@ extension IsoConfig {
           }
         }.keys)
     }
-    return headered(claude.mcpServers).union(headered(codex.mcpServers)).sorted()
+    return agents.reduce(into: Set<String>()) { $0.formUnion(headered($1.config.mcpServers)) }
+      .sorted()
   }
 
   /// This command's agents without header-bearing MCP servers (see

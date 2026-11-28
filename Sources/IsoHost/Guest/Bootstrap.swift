@@ -106,14 +106,14 @@ package struct AgentBootstrap: Sendable {
   /// all of them; every provider's under `proxy.mode = "required"`, `egress =
   /// "none"` or a stored policy that enforces a provider action; `OPENAI_API_KEY`
   /// under ChatGPT account auth.
-  func withheldVariables(proxyAnthropic: Bool, proxyOpenAI: Bool, policyEnforced: Bool = false)
+  func withheldVariables(proxied: Set<ProxyProvider>, policyEnforced: Bool = false)
     -> [String: WithholdReason]
   {
     let required = config.proxy.mode == .required || policyEnforced
     let noEgress = config.egress == .none
     var out: [String: WithholdReason] = [:]
-    for (provider, proxied) in [(ProxyProvider.anthropic, proxyAnthropic), (.openai, proxyOpenAI)] {
-      guard proxied || required || noEgress else { continue }
+    for provider in ProxyProvider.allCases {
+      guard proxied.contains(provider) || required || noEgress else { continue }
       for name in provider.recognizedVariables {
         out[name] =
           required ? .required(provider) : noEgress ? .noEgress(provider) : .proxied
@@ -143,32 +143,23 @@ package struct AgentBootstrap: Sendable {
   /// withheld per `withheldVariables`; `cmd:` keys are resolved here, when a
   /// session needs them.
   package func prepareEnvForwarding(
-    repo: RepoSlug?, suppressAnthropicKey: Bool, suppressOpenAIKey: Bool,
-    policyEnforced: Bool = false
+    repo: RepoSlug?, suppressing proxied: Set<ProxyProvider>, policyEnforced: Bool = false
   ) throws -> EnvForward {
-    let withheld = withheldVariables(
-      proxyAnthropic: suppressAnthropicKey, proxyOpenAI: suppressOpenAIKey,
-      policyEnforced: policyEnforced)
+    let withheld = withheldVariables(proxied: proxied, policyEnforced: policyEnforced)
     var env = EnvForward()
 
-    if let reason = withheld["ANTHROPIC_API_KEY"] {
-      diagnostics.debug("\(reason): not forwarding ANTHROPIC_API_KEY into the guest")
-    } else if let key = config.claude.apiKey {
-      do { env.set("ANTHROPIC_API_KEY", try resolver.resolve(key)) } catch {
-        throw ContextError("Failed to resolve claude.api_key", cause: error)
+    for (variable, section, agent) in [
+      ("ANTHROPIC_API_KEY", "claude", config.claude), ("OPENAI_API_KEY", "codex", config.codex),
+    ] {
+      if let reason = withheld[variable] {
+        diagnostics.debug("\(reason): not forwarding \(variable) into the guest")
+      } else if let key = agent.apiKey {
+        do { env.set(variable, try resolver.resolve(key)) } catch {
+          throw ContextError("Failed to resolve \(section).api_key", cause: error)
+        }
+      } else if let key = environment[variable] {
+        env.set(variable, Secret(key))
       }
-    } else if let key = environment["ANTHROPIC_API_KEY"] {
-      env.set("ANTHROPIC_API_KEY", Secret(key))
-    }
-
-    if let reason = withheld["OPENAI_API_KEY"] {
-      diagnostics.debug("\(reason): not forwarding OPENAI_API_KEY into the guest")
-    } else if let key = config.codex.apiKey {
-      do { env.set("OPENAI_API_KEY", try resolver.resolve(key)) } catch {
-        throw ContextError("Failed to resolve codex.api_key", cause: error)
-      }
-    } else if let key = environment["OPENAI_API_KEY"] {
-      env.set("OPENAI_API_KEY", Secret(key))
     }
 
     if let token = try github.token(repo: repo) {
@@ -177,7 +168,7 @@ package struct AgentBootstrap: Sendable {
       diagnostics.debug("no GITHUB_TOKEN forwarded to guest")
     }
 
-    for name in config.claude.envForward + config.codex.envForward {
+    for name in config.agents.flatMap(\.config.envForward) {
       if let reason = withheld[name.rawValue] {
         try refuse(name.rawValue, from: "env_forward", reason: reason)
         continue
@@ -231,9 +222,9 @@ package struct AgentBootstrap: Sendable {
     guard !noAgents, config.proxy.mode == .required || config.egress == .none,
       try ModelState.loadOrDefault(instance).mode == .remote
     else { return }
-    let configured =
-      try proxyConfigured(instance, .anthropic, entries: guestEnvironment)
-      || proxyConfigured(instance, .openai, entries: guestEnvironment)
+    let configured = try ProxyProvider.allCases.contains {
+      try proxyConfigured(instance, $0, entries: guestEnvironment)
+    }
     guard !configured else { return }
     if config.proxy.mode == .off {
       throw HostError(
@@ -279,16 +270,18 @@ package struct AgentBootstrap: Sendable {
     _ = try secrets.resolve(names)
   }
 
+  /// Providers whose proxy serves this VM's remote-model sessions.
+  func proxiedProviders(_ instance: Instance) throws -> Set<ProxyProvider> {
+    guard try ModelState.loadOrDefault(instance).mode == .remote else { return [] }
+    return Set(try ProxyProvider.allCases.filter { try proxyConfigured(instance, $0) })
+  }
+
   package func prepareSession(_ instance: Instance?, target: SSHTarget, repo: RepoSlug?) throws
     -> SSHSession
   {
     let model = try instance.map(ModelState.loadOrDefault)
-    var proxyAnthropic = false
-    var proxyOpenAI = false
-    if let instance, model?.mode == .remote {
-      proxyAnthropic = try proxyConfigured(instance, .anthropic)
-      proxyOpenAI = try proxyConfigured(instance, .openai)
-    }
+    let proxied = try instance.map(proxiedProviders) ?? []
+    let proxyOpenAI = proxied.contains(.openai)
     let codexAccount = config.codexAuth == .chatgpt
     if codexAccount && proxyOpenAI { diagnostics.warn(CodexChecks.chatgptProxyConflictMessage) }
     // The running boot's stored policy, not the current configuration,
@@ -305,15 +298,13 @@ package struct AgentBootstrap: Sendable {
     let assigned = try instance.flatMap { try github.activeAssignment($0) }
     try prefetchSessionSecrets(instance, repo: assigned ?? repo)
     var env = try prepareEnvForwarding(
-      repo: assigned ?? repo, suppressAnthropicKey: proxyAnthropic,
-      suppressOpenAIKey: proxyOpenAI, policyEnforced: policyEnforced)
+      repo: assigned ?? repo, suppressing: proxied, policyEnforced: policyEnforced)
     if let instance {
       if let state = try GuestEnvState.tryLoad(instance) {
         let proxyNames = try ProxyState.storedCredentialNames(config.proxy, instance: instance)
         try GuestEnvState.checkCredentialSeparation(state.entries, proxyCredentialNames: proxyNames)
         let routed = Set(try state.providerSecrets().values.map(\.variable))
-        let withheld = withheldVariables(
-          proxyAnthropic: proxyAnthropic, proxyOpenAI: proxyOpenAI, policyEnforced: policyEnforced)
+        let withheld = withheldVariables(proxied: proxied, policyEnforced: policyEnforced)
         let granted = try GrantLedger.sessionEnvironment(
           instance, revoked: config.revokedGrantIDs)
         let ungranted = Set(state.entries.keys.filter { !granted.contains($0.rawValue) })
@@ -456,8 +447,7 @@ package struct AgentBootstrap: Sendable {
     let preparationTarget = preparation?.target ?? target
     recordBoot(instance)
     let postStart = postStartOverride ?? config.postStart
-    let proxyConfigured =
-      try proxyConfigured(instance, .anthropic) || proxyConfigured(instance, .openai)
+    let proxyConfigured = try ProxyProvider.allCases.contains { try proxyConfigured(instance, $0) }
     if noAgents && proxyConfigured {
       diagnostics.warn(
         "proxy mode is configured but --no-agents skips agent bootstrap; agents will not be able to authenticate in this VM"
@@ -621,7 +611,7 @@ package struct AgentBootstrap: Sendable {
       let server = Self.computerUseServer(sidecar)
     else { return self }
     let name = Self.computerUseServer
-    guard config.claude.mcpServers[name] == nil, config.codex.mcpServers[name] == nil else {
+    guard config.agents.allSatisfy({ $0.config.mcpServers[name] == nil }) else {
       throw HostError(
         "the MCP server name \"\(name)\" is reserved for computer_use.guest_access; rename yours")
     }

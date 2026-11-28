@@ -527,12 +527,12 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
 // MARK: - Agent update
 
 @Test func agentSelectionsAndVersions() throws {
-  #expect(AgentUpdate.Selection(claude: true, codex: false) == .claude)
-  #expect(AgentUpdate.Selection(claude: false, codex: true) == .codex)
-  #expect(AgentUpdate.Selection(claude: false, codex: false) == .both)
-  #expect(AgentUpdate.Selection(claude: true, codex: true) == .both)
-  #expect(AgentUpdate.Selection.both.agents == [.claude, .codex])
-  #expect(AgentUpdate.Selection.both.phrase == "Claude Code and Codex")
+  #expect(AgentUpdate.Selection([.claude]).agents == [.claude])
+  #expect(AgentUpdate.Selection([.codex]).agents == [.codex])
+  #expect(AgentUpdate.Selection([]) == .all)
+  #expect(AgentUpdate.Selection([.codex, .claude]).agents == [.claude, .codex])
+  #expect(AgentUpdate.Selection.all.agents == [.claude, .codex])
+  #expect(AgentUpdate.Selection.all.phrase == "Claude Code and Codex")
 
   let v = { (text: String) in SemanticVersion.first(in: text) }
   #expect(v("1.2.3") == v("v1.2.3"))
@@ -579,7 +579,7 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
   defer { guest.remove() }
   let session = SSHSession(target: guest.target)
   var lines: [String] = []
-  try AgentUpdate.run(guest.client, session, .both) { lines.append($0) }
+  try AgentUpdate.run(guest.client, session, .all) { lines.append($0) }
   #expect(lines[0] == "Claude Code: already at the latest version (2.1.0)")
   #expect(lines[1] == "  note: Claude Code also auto-updates in the background.")
   #expect(lines[2] == "Codex: already at the latest version (0.50.0)")
@@ -589,12 +589,12 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
   #expect(readFile(guest.root + "/sudo-stdin") == EmbeddedResources.guestScript("codex.sh"))
 
   let check = try AgentUpdate.check(
-    guest.client, session, .codex, latestCodexTag: { "rust-v0.51.0" },
+    guest.client, session, .init([.codex]), latestCodexTag: { "rust-v0.51.0" },
     diagnostics: guest.sink.diagnostics)
   #expect(
     check == ["Codex        0.50.0 → 0.51.0  update available — run: iso agent update --codex"])
   let offline = try AgentUpdate.check(
-    guest.client, session, .codex, latestCodexTag: { throw HostError("offline") },
+    guest.client, session, .init([.codex]), latestCodexTag: { throw HostError("offline") },
     diagnostics: guest.sink.diagnostics)
   #expect(offline[0].contains("could not determine latest version"))
 }

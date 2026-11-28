@@ -10,7 +10,7 @@ import IsoCore
 /// rebuild. Codex is reinstalled as root via its embedded installer (script on
 /// stdin); Claude Code runs `claude update` as the guest user.
 package enum AgentUpdate {
-  package enum Agent: Sendable, Equatable {
+  package enum Agent: Sendable, Equatable, CaseIterable {
     case claude, codex
 
     package var display: String {
@@ -21,26 +21,24 @@ package enum AgentUpdate {
     }
   }
 
-  package enum Selection: Sendable, Equatable {
-    case claude, codex, both
+  /// The agents to update, in `Agent.allCases` order; none named means all.
+  package struct Selection: Sendable, Equatable {
+    package let agents: [Agent]
 
-    package init(claude: Bool, codex: Bool) {
-      switch (claude, codex) {
-      case (true, false): self = .claude
-      case (false, true): self = .codex
-      default: self = .both
-      }
+    package init(_ requested: Set<Agent>) {
+      let wanted = requested.isEmpty ? Set(Agent.allCases) : requested
+      agents = Agent.allCases.filter(wanted.contains)
     }
 
-    package var agents: [Agent] {
-      switch self {
-      case .claude: [.claude]
-      case .codex: [.codex]
-      case .both: [.claude, .codex]
+    package static let all = Selection([])
+
+    package var phrase: String {
+      switch agents.count {
+      case 1: agents[0].display
+      default:
+        agents.dropLast().map(\.display).joined(separator: ", ") + " and " + agents.last!.display
       }
     }
-
-    package var phrase: String { agents.map(\.display).joined(separator: " and ") }
   }
 
   package static let codexRepository = "openai/codex"

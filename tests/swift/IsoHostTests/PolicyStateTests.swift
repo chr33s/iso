@@ -284,9 +284,9 @@ private func instance() throws -> Instance {
   let guest = try FakeGuest()
   defer { guest.remove() }
   let agents = guest.bootstrap(try testConfig(#""proxy": {"mode": "auto"}"#))
-  #expect(agents.withheldVariables(proxyAnthropic: false, proxyOpenAI: false).isEmpty)
+  #expect(agents.withheldVariables(proxied: []).isEmpty)
   let withheld = agents.withheldVariables(
-    proxyAnthropic: false, proxyOpenAI: false, policyEnforced: true)
+    proxied: [], policyEnforced: true)
   #expect(withheld["ANTHROPIC_API_KEY"] != nil)
   #expect(withheld["OPENAI_API_KEY"] != nil)
 }

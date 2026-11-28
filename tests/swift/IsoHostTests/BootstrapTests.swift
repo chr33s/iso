@@ -19,7 +19,7 @@ import Testing
     """#)
   var agents = guest.bootstrap(config)
   var env = try agents.prepareEnvForwarding(
-    repo: nil, suppressAnthropicKey: true, suppressOpenAIKey: true)
+    repo: nil, suppressing: [.anthropic, .openai])
   #expect(!env.contains("ANTHROPIC_API_KEY"))
   #expect(!env.contains("OPENAI_API_KEY"))
   #expect(env.contains("GUEST_VAR"))
@@ -33,7 +33,7 @@ import Testing
     #""codex": {"api_key": "sk-oai", "auth": "chatgpt"}, "guest_env": {"OPENAI_API_KEY": "y"}"#)
   agents = guest.bootstrap(chatgpt)
   env = try agents.prepareEnvForwarding(
-    repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+    repo: nil, suppressing: [])
   #expect(!env.contains("OPENAI_API_KEY"))
   #expect(guest.sink.text.contains("codex.auth = \"chatgpt\": ignoring guest_env entry"))
 }
@@ -54,7 +54,7 @@ import Testing
     resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
     diagnostics: guest.sink.diagnostics)
   let env = try agents.prepareEnvForwarding(
-    repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+    repo: nil, suppressing: [])
   #expect(env.names == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "EXTRA", "GUEST_VAR"])
   // Values travel only in ssh's environment; the stub records them.
   let session = SSHSession(target: guest.target, env: env)
@@ -72,7 +72,7 @@ import Testing
   let failing = try testConfig(#""claude": {"api_key": "cmd:exit 3"}"#)
   let error = try #require(throws: (any Error).self) {
     try guest.bootstrap(failing).prepareEnvForwarding(
-      repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+      repo: nil, suppressing: [])
   }
   #expect("\(error)".contains("Failed to resolve claude.api_key"))
 }
@@ -927,7 +927,7 @@ private func stageCodex(
     diagnostics: guest.sink.diagnostics)
   // Automatic host forwards are withheld without an error.
   let env = try agents.prepareEnvForwarding(
-    repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+    repo: nil, suppressing: [])
   #expect(env.names == ["OK"])
 
   for declaration in [
@@ -938,7 +938,7 @@ private func stageCodex(
     let config = try testConfig(#""proxy": {"mode": "required"}, "# + declaration)
     let error = try #require(throws: HostError.self) {
       try guest.bootstrap(config).prepareEnvForwarding(
-        repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+        repo: nil, suppressing: [])
     }
     #expect(error.message.contains("proxy.mode = \"required\""))
     #expect(!error.message.contains("\"x\""))
@@ -970,7 +970,7 @@ private func stageCodex(
     ], home: nil, resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
     diagnostics: guest.sink.diagnostics)
   let env = try agents.prepareEnvForwarding(
-    repo: nil, suppressAnthropicKey: true, suppressOpenAIKey: false)
+    repo: nil, suppressing: [.anthropic])
   #expect(!env.contains("CLAUDE_CODE_OAUTH_TOKEN") && !env.contains("ANTHROPIC_AUTH_TOKEN"))
   // Unproxied OpenAI still forwards the raw key.
   #expect(env.contains("OPENAI_API_KEY"))
@@ -1247,14 +1247,14 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
     resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
     diagnostics: guest.sink.diagnostics)
   let env = try agents.prepareEnvForwarding(
-    repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+    repo: nil, suppressing: [])
   #expect(env.names == ["OK"])
   let declared = try testConfig(
     #""egress": "none", "proxy": {"mode": "off"}, "claude": {"env_forward": ["ANTHROPIC_API_KEY"]}"#
   )
   let error = try #require(throws: HostError.self) {
     try guest.bootstrap(declared).prepareEnvForwarding(
-      repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+      repo: nil, suppressing: [])
   }
   #expect(error.message.contains("egress = \"none\""))
 

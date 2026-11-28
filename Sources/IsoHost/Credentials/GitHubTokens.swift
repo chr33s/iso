@@ -335,7 +335,7 @@ package struct GitHubAssignment: Equatable, Sendable {
     guard let assignment = try load(instance) else { return nil }
     try assignment.validate(config)
     try rejectOverrides(config.guestEnvironment.map(\.name.rawValue))
-    try rejectOverrides((config.claude.envForward + config.codex.envForward).map(\.rawValue))
+    try rejectOverrides(config.agents.flatMap(\.config.envForward).map(\.rawValue))
     if let names = try persistedGuestEnvironmentNames(instance) { try rejectOverrides(names) }
     return assignment
   }
